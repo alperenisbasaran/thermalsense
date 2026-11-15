@@ -166,6 +166,10 @@ body {
   pointer-events: none;
 }
 .map-note.error { color: var(--danger); border-color: var(--danger); }
+/* Comparison view: the top centre belongs to the divider's caption cards. 64px
+   clears Leaflet's attribution, which wraps to three lines (50px) on a map
+   narrower than ~800px. */
+.map-note.low { top: auto; bottom: 64px; }
 
 /* ── Top bar ── */
 .top-bar {
