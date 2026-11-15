@@ -322,6 +322,24 @@ def grid_shape(radius: float = GRID_RADIUS) -> tuple[int, int]:
     return (n, n)
 
 
+def coarse_lattice(fine: np.ndarray) -> np.ndarray:
+    """
+    The measured samples a fine grid from fetch_elevation_grid was built on.
+
+    Everything between them is interpolation: 121 elevations go in, 40,401 come
+    out.  The upsample runs endpoint to endpoint, so coarse[i] sits at
+    fine[i * step] and striding recovers the samples without keeping a second
+    cache beside _grid_cache — to within the ~1e-12 m the interpolation's float
+    arithmetic leaves behind, which is why callers round rather than compare.
+
+    This is what the map's raw-data view draws.  It must stay the fetched
+    values and never a decimation of something already smoothed, or the view
+    stops showing what the model was actually given.
+    """
+    step = round(TERRAIN_RES / GRID_RES)
+    return fine[::step, ::step]
+
+
 async def fetch_elevation_grid(lat: float, lon: float,
                                radius: float = GRID_RADIUS,
                                strict: bool = False) -> np.ndarray | None:

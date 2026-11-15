@@ -13,7 +13,7 @@ from data.ogn_client      import fetch_ogn_gliders, start_ogn_stream, fetch_glid
 from data import meteo_client, terrain_client, landcover_client
 from data.meteo_client    import fetch_meteo_features
 from data.landcover_client import fetch_landcover_fine
-from data.terrain_client  import fetch_elevation_grid, fetch_elevation_point, fetch_elevation_batch, snap_grid_centre, cached_elevation
+from data.terrain_client  import fetch_elevation_grid, fetch_elevation_point, fetch_elevation_batch, snap_grid_centre, cached_elevation, coarse_lattice
 from pipeline.feature_engineering import build_feature_matrix
 from models.thermal_model import ThermalModel, _MIN_SOLAR_GHI
 from config import (UPDATE_INTERVAL, WS_FRAME_INTERVAL, GRID_RES, GRID_RADIUS, CORS_ORIGINS, ADMIN_TOKEN,
@@ -466,6 +466,7 @@ async def predict(lat: float, lon: float, alt: int | None = None, forecast_h: in
             land_use_props=land_props,
         )
         grid_rows, grid_cols = terrain.shape
+        raw_elev = coarse_lattice(terrain)
         # to_thread, not inline: predict() runs _MC_SAMPLES synchronous passes
         # over the whole grid (~2M rows), which pins the event loop for ~0.5 s on
         # the deployed VM.  The app is pinned to --workers 1, so that stalls the
@@ -513,6 +514,20 @@ async def predict(lat: float, lon: float, alt: int | None = None, forecast_h: in
         # prediction of none.  An older bundle that ignores the flag still gets
         # a dark map, which is the right answer, just unexplained.
         "no_insolation": bool(no_insolation),
+        # What this heatmap was built from, for the map's raw-data / product
+        # comparison: the elevation samples that were actually fetched (the
+        # rest of the terrain grid is interpolated between them) and the width
+        # of the feature row made for every cell.  Row-major, south to north
+        # and west to east, the same order as heatmap.  feature_count is read
+        # off the matrix rather than sent as a constant so the client never
+        # carries its own copy of a number that changes with the pipeline.
+        # Additive: a bundle that ignores it draws exactly what it drew before.
+        "inputs": {
+            "elevation":      np.rint(raw_elev).astype(int).ravel().tolist(),
+            "elevation_rows": int(raw_elev.shape[0]),
+            "elevation_cols": int(raw_elev.shape[1]),
+            "feature_count":  int(features.shape[1]),
+        },
         "thermal_base": meteo["cape_base"],
         "cape":         meteo["cape"],
         "weather": {
