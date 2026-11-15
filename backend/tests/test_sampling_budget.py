@@ -101,7 +101,7 @@ def cycle(monkeypatch):
     async def gliders():
         return [_glider(i) for i in range(50)]
 
-    async def meteo_f(lat, lon, h):
+    async def meteo_f(lat, lon, h, strict=False):
         seen["meteo"] += 1
         return {"temp_2m": 20.0, "humidity": 0.5, "wind_speed": 3.0, "wind_dir": 0.0,
                 "cape": 800.0, "cin": 5.0, "solar_ghi": 700.0, "temp_850": 10.0,
@@ -155,7 +155,7 @@ async def test_cycle_stops_at_the_meteo_quota(cycle, monkeypatch):
 async def test_a_dark_grid_costs_no_terrain(cycle, monkeypatch):
     """At night every candidate is dropped on solar_ghi. Building the feature
     matrix first spent 7 MB and a terrain read to throw the result away."""
-    async def dark(lat, lon, h):
+    async def dark(lat, lon, h, strict=False):
         cycle["meteo"] += 1
         return {"temp_2m": 8.0, "humidity": 0.8, "wind_speed": 3.0, "wind_dir": 0.0,
                 "cape": 0.0, "cin": 5.0, "solar_ghi": 0.0, "temp_850": 4.0,
@@ -169,6 +169,77 @@ async def test_a_dark_grid_costs_no_terrain(cycle, monkeypatch):
     await m.retrain()
     assert cycle["meteo"] == 5 and cycle["terrain"] == 0
     assert m._buffer_X == []
+
+
+async def test_strict_fetch_returns_none_instead_of_inventing_weather(monkeypatch):
+    """Training callers must be able to tell a forecast from the stand-in."""
+    class Boom:
+        async def get(self, *a, **k):
+            raise RuntimeError("offline")
+
+    monkeypatch.setattr(mc, "_get_client", lambda: Boom())
+    monkeypatch.setattr(mc, "_live_cache", {})
+    monkeypatch.setattr(mc, "_live_hour", "")
+    assert await mc.fetch_meteo_features(46.8, 11.2, 0, strict=True) is None
+    assert mc._live_cache == {}
+
+
+async def test_a_grid_with_no_weather_is_skipped_not_trained_on(cycle, monkeypatch):
+    """862 of 48,281 buffer rows were real labels on 18 degC / 500 W/m2 / CAPE 600:
+    the sampler took _FALLBACK for a forecast whenever Open-Meteo failed."""
+    async def offline(lat, lon, h, strict=False):
+        cycle["meteo"] += 1
+        return None if strict else mc._FALLBACK.copy()
+
+    monkeypatch.setattr(mc, "fetch_meteo_features", offline)
+    monkeypatch.setattr(tm, "MAX_SAMPLE_GRIDS", 5)
+    m = tm.ThermalModel()
+    monkeypatch.setattr(m, "fit_and_gate", lambda: None)
+    await m.retrain()
+    assert cycle["meteo"] == 5 and cycle["terrain"] == 0
+    assert m._buffer_X == []
+
+
+def _feature_row(meteo):
+    from pipeline.feature_engineering import build_feature_matrix
+    elev = np.full((3, 3), 800.0)
+    return build_feature_matrix(meteo, elev, lat_bounds=(46.0, 46.1),
+                                lon_bounds=(11.0, 11.1), alt_amsl=2000.0)[4]
+
+
+def test_fallback_rows_are_recognised_by_the_columns_they_land_in():
+    """Pins _FALLBACK_SIGNATURE to build_feature_matrix's column order."""
+    real = {"temp_2m": 21.4, "humidity": 0.43, "wind_speed": 9.0, "wind_dir": 200.0,
+            "cape": 310.0, "cin": 4.0, "solar_ghi": 640.0, "temp_850": 9.0,
+            "temp_500": -14.0, "lapse_rate": 6.6, "cape_base": 2400,
+            "pbl_height": 1850.0, "soil_temp": 23.1}
+    X = np.vstack([_feature_row(mc._FALLBACK), _feature_row(real)])
+    assert mc.is_fallback_row(X).tolist() == [True, False]
+
+
+def test_one_coincident_value_does_not_make_a_row_synthetic():
+    """18.0 degC is an ordinary afternoon; only the whole signature is damning."""
+    real = {"temp_2m": 18.0, "humidity": 0.60, "wind_speed": 9.0, "wind_dir": 200.0,
+            "cape": 310.0, "cin": 4.0, "solar_ghi": 640.0, "temp_850": 9.0,
+            "temp_500": -14.0, "lapse_rate": 6.6, "cape_base": 2400,
+            "pbl_height": 1850.0, "soil_temp": 20.0}
+    assert not mc.is_fallback_row(np.vstack([_feature_row(real)]))[0]
+
+
+async def test_load_drops_rows_built_from_the_fallback(tmp_path, monkeypatch):
+    real = {"temp_2m": 21.4, "humidity": 0.43, "wind_speed": 9.0, "wind_dir": 200.0,
+            "cape": 310.0, "cin": 4.0, "solar_ghi": 640.0, "temp_850": 9.0,
+            "temp_500": -14.0, "lapse_rate": 6.6, "cape_base": 2400,
+            "pbl_height": 1850.0, "soil_temp": 23.1}
+    X = np.vstack([_feature_row(real), _feature_row(mc._FALLBACK), _feature_row(real)])
+    y = np.array([1, 1, 0])
+    path = tmp_path / "buf.npz"
+    np.savez(path, X=X, y=y, label_version=np.array(tm._LABEL_VERSION))
+    monkeypatch.setattr(tm, "BUFFER_PATH", str(path))
+    monkeypatch.setattr(tm, "MODEL_PATH", str(tmp_path / "none.json"))
+    m = tm.ThermalModel()
+    await m.load()
+    assert len(m._buffer_X) == 2 and m._buffer_y == [1, 0]
 
 
 # ---------------------------------------------------------------------------

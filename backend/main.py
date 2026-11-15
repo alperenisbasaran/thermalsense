@@ -329,6 +329,10 @@ async def training_status():
             "gliders_in_view": gliders_in_view,
             "beacons": await section(_beacon_stats),
             "retention_days": BEACON_RETENTION_DAYS,
+            # What the plausibility gate has refused since start.  A filter
+            # nobody can see the work of is indistinguishable from one that
+            # is dropping the whole feed.
+            "implausible": ogn_client.gate_stats(),
         },
         "model": {
             "loaded": model.is_loaded,

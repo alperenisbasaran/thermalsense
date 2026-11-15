@@ -334,6 +334,7 @@ _VARIO_RE  = re.compile(r'([+-]\d+)fpm')               # vertical speed in ft/mi
 _ROT_RE    = re.compile(r'([+-]\d+(?:\.\d+)?)rot')     # turn rate in half-turns/min
 _COURSE_RE = re.compile(r'[EW][^\s/\\](\d{3})/(\d{3})') # symbol-char + course(deg)/speed(kts)
 _ID_RE     = re.compile(r'\bid([0-9A-Fa-f]{2})[0-9A-Fa-f]{6}')  # OGN aircraft-type byte
+_TIME_RE   = re.compile(r'^[/@](\d{2})(\d{2})(\d{2})h')        # UTC time of the fix
 
 # --- Aircraft types (OGN id-byte, bits 5-2) ----------------------------------
 AC_TYPE_NAMES = {
@@ -493,6 +494,13 @@ def _parse_beacon(line: str) -> dict | None:
         if ac_type not in DISPLAY_AC_TYPES:
             return None   # powered / unknown / non-aircraft — never enters the system
 
+        # When the aircraft took this fix, as seconds into the UTC day.  Only
+        # used to tell a new fix from the same one relayed by a second receiver
+        # (see _admit) — never as a clock, since it carries no date.
+        fix_tod = None
+        if tm := _TIME_RE.match(payload):
+            fix_tod = int(tm.group(1)) * 3600 + int(tm.group(2)) * 60 + int(tm.group(3))
+
         return {
             "id":        callsign,
             "lat":       lat,
@@ -512,9 +520,206 @@ def _parse_beacon(line: str) -> dict | None:
             # with a view of the other traffic.  Two different questions.
             "is_tow":    ac_type == TOW_AC_TYPE,
             "under_tow": False,
+            "fix_tod":   fix_tod,
         }
     except Exception:
         return None
+
+
+# --- Plausibility gate --------------------------------------------------------
+# The type allow-list above trusts what a beacon says it is.  This checks what it
+# does, because the feed carries ids that are not one aircraft at all.
+#
+# Measured on the beacon DB (5 Nov 2026, 10:00-14:00 UTC, 2,013 ids): 134 ids
+# made at least one leg no glider can fly and 17 jumped more than 100 km.  The
+# worst, FLR1900FF — typed "tow plane" — changed position by up to 628 km 253
+# times in four hours, at 10,700 m with a vario pinned at +-50 m/s: several
+# airliners arriving under one address.  On the map that is one icon crossing
+# France, Switzerland and Italy every few seconds.  A 200 s capture of the raw
+# feed (15 Nov 2026) showed the same family live: FLR18008D, typed "hang
+# glider", reporting 537-1,333 km/h at 7,100 m.  Three ids in the same DB window
+# reported altitudes above 64,000 m.
+#
+# Real traffic is nowhere near these limits — in that capture the 99th
+# percentile of reported ground speed was 163 km/h — so the gate is set well
+# clear of anything a sailplane, tug or paraglider does, and it fails closed:
+# what it rejects never reaches the map, the beacon DB, thermal clustering or
+# the training labels.
+#
+# Checks, cheapest first:
+#   * altitude above _MAX_ALT_M is a corrupt field; the beacon is dropped.
+#   * reported ground speed above _MAX_SPEED_KMH is not one of the admitted
+#     types; the beacon is dropped and the id takes a strike.
+#   * a fix taken *before* the one already on the track is history arriving
+#     late — some trackers upload their backlog in a burst alongside the live
+#     radio path — and would drag the icon back along its own flight.  Dropped.
+#   * a position the track's last fix cannot reach at _MAX_SPEED_KMH is held
+#     back as a candidate.  A lone outlier simply never shows: the next fix
+#     lands back on the track and the candidate is forgotten.  The track only
+#     moves to the candidate once a second, different fix agrees with it — and
+#     an established track that is still reporting does not move even then,
+#     because one aircraft cannot be in both places and the track got there
+#     first.  A relocation is a strike.
+# _STRIKES_TO_QUARANTINE strikes inside _STRIKE_WINDOW_S and the id is removed
+# and ignored for _QUARANTINE_S, extended for as long as it keeps earning them.
+_MAX_SPEED_KMH = 400.0
+_MAX_ALT_M     = 15_000
+# Added to the distance a fix may be from the last one.  Beacons are stamped on
+# arrival, and 99.9% arrive within 12 s of the fix they carry (same capture), so
+# two fixes can look closer in time than they were; 5 km covers a glider at
+# 300 km/h whose packet sat in transit for a minute.
+_JUMP_SLACK_KM = 5.0
+# A track this many distinct fixes long is believed over a rival stream under
+# the same id, for as long as it has reported within _HANDOVER_S.  Without it a
+# two-fix GPS fault relocated the icon out and back: replaying the DB window
+# above, ICA3FF433 went 3,329 km and returned inside 20 s.  The exception for a
+# short track is what lets an aircraft whose very first fix was the bad one
+# recover on its second good fix instead of waiting out the TTL.
+_ESTABLISHED_FIXES = 3
+_HANDOVER_S        = 60.0
+# Three, not two: after a coverage gap longer than _HANDOVER_S a real aircraft
+# with a two-fix fault still relocates out and back — two strikes from one
+# fault — and should survive it.
+_STRIKES_TO_QUARANTINE = 3
+_STRIKE_WINDOW_S = 1800.0
+_QUARANTINE_S    = 1800.0
+# Forget an id this long after its last beacon.  Not shorter than the strike
+# window or the quarantine, or a slow hopper would be born innocent each time.
+_TRACK_IDLE_S    = 1800.0
+
+# { id: {"ref", "cand", "run", "strikes", "until", "seen"} } — a fix is the
+# tuple (lat, lon, monotonic arrival time, fix_tod); "run" counts the distinct
+# fixes accepted onto the current track.  Stream thread only.
+_tracks: dict[str, dict] = {}
+_gate_counts = {"rejected": 0, "quarantines": 0}
+_last_track_prune = 0.0
+
+
+def _reachable(a: tuple, b: tuple) -> bool:
+    """Could an aircraft at fix `a` have got to fix `b` by the time `b` arrived?"""
+    dt = max(b[2] - a[2], 0.0)
+    allowed_km = _JUMP_SLACK_KM + _MAX_SPEED_KMH * dt / 3600.0
+    return _distance_m(a[0], a[1], b[0], b[1]) / 1000.0 <= allowed_km
+
+
+def _fix_precedes(tod: int | None, other: int | None) -> bool:
+    """Was a fix stamped `tod` taken before one stamped `other`?
+
+    Seconds into the UTC day, so the comparison wraps: 00:00:01 follows
+    23:59:59.  Unknown on either side is "no", which leaves the beacon to the
+    distance checks.
+    """
+    if tod is None or other is None:
+        return False
+    return (tod - other + 43200) % 86400 - 43200 < 0
+
+
+def _evict(gid: str) -> None:
+    """Take an id off the map now, rather than when its TTL runs out."""
+    with _lock:
+        _live_gliders.pop(gid, None)
+    with _bbuf_lock:
+        _beacon_buffers.pop(gid, None)
+
+
+def _strike(gid: str, st: dict, now: float, why: str) -> None:
+    recent = [t for t in st["strikes"] if now - t < _STRIKE_WINDOW_S]
+    st["strikes"] = (recent + [now])[-_STRIKES_TO_QUARANTINE:]
+    if len(st["strikes"]) < _STRIKES_TO_QUARANTINE:
+        return
+    newly = now >= st["until"]
+    st["until"] = now + _QUARANTINE_S
+    if newly:
+        _gate_counts["quarantines"] += 1
+        _evict(gid)
+        print(f"[OGN] {gid} quarantined for {_QUARANTINE_S / 60:.0f} min — {why}")
+
+
+def _prune_tracks(now: float) -> None:
+    global _last_track_prune
+    if now - _last_track_prune < 60.0:
+        return
+    _last_track_prune = now
+    idle = [g for g, st in _tracks.items()
+            if now - st["seen"] > _TRACK_IDLE_S and now >= st["until"]]
+    for g in idle:
+        del _tracks[g]
+
+
+def _admit(beacon: dict, now: float) -> bool:
+    """Is this beacon something one real aircraft could have sent?
+
+    Stream thread only.  `now` is time.monotonic() at arrival.
+    """
+    _prune_tracks(now)
+    if beacon["alt"] > _MAX_ALT_M:
+        _gate_counts["rejected"] += 1
+        return False
+
+    gid = beacon["id"]
+    st = _tracks.get(gid)
+    if st is None:
+        st = _tracks[gid] = {"ref": None, "cand": None, "run": 0,
+                             "strikes": [], "until": 0.0, "seen": now}
+    st["seen"] = now
+
+    here = (beacon["lat"], beacon["lon"], now, beacon.get("fix_tod"))
+    ref, cand = st["ref"], st["cand"]
+    # Is the track still being reported?  Past _HANDOVER_S of silence it no
+    # longer outranks anything — and a fix time that looks older than a stale
+    # track's is as likely a clock fault on the track as history on the wire.
+    live = ref is not None and now - ref[2] <= _HANDOVER_S
+
+    if beacon["speed_kmh"] > _MAX_SPEED_KMH:
+        _strike(gid, st, now, f"reported {beacon['speed_kmh']} km/h")
+        ok = False
+    elif ref is None:
+        st["ref"], st["run"] = here, 1
+        ok = True
+    elif live and _fix_precedes(here[3], ref[3]):
+        ok = False
+    elif _reachable(ref, here):
+        # A repeat of the fix already on the track — the same beacon relayed by
+        # a second receiver, 17% of consecutive pairs — lengthens nothing.
+        if here[3] is None or here[3] != ref[3]:
+            st["run"] += 1
+        st["ref"], st["cand"] = here, None
+        ok = True
+    elif cand is not None and here[3] is not None and here[3] == cand[3]:
+        ok = False      # the candidate heard twice is still one fix, not two
+    elif cand is not None and _reachable(cand, here):
+        if live and st["run"] >= _ESTABLISHED_FIXES:
+            st["cand"] = here       # keep following the rival; the track stands
+            ok = False
+        else:
+            km = _distance_m(ref[0], ref[1], here[0], here[1]) / 1000.0
+            st["ref"], st["cand"], st["run"] = here, None, 2
+            _strike(gid, st, now,
+                    f"jumped {km:.0f} km in {here[2] - ref[2]:.0f} s")
+            ok = True
+    else:
+        st["cand"] = here
+        ok = False
+
+    # Checked last so a quarantined id keeps being tracked: every further
+    # relocation or over-speed report is another strike and pushes the release
+    # out, which is what keeps a chronic offender off the map for good.
+    if ok and now < st["until"]:
+        ok = False
+    if not ok:
+        _gate_counts["rejected"] += 1
+    return ok
+
+
+def gate_stats(now: float | None = None) -> dict:
+    """Plausibility-gate counters since start, for /training/status."""
+    if now is None:
+        now = time.monotonic()
+    # list() first: the stream thread adds ids while this runs on the event loop.
+    held = sum(1 for st in list(_tracks.values()) if now < st["until"])
+    return {"rejected_beacons": _gate_counts["rejected"],
+            "quarantines": _gate_counts["quarantines"],
+            "quarantined_now": held}
 
 
 def _stream_thread() -> None:
@@ -550,6 +755,10 @@ def _stream_thread() -> None:
                         beacon = _parse_beacon(raw.decode("ascii", errors="replace"))
                         if beacon and (LAT_MIN <= beacon["lat"] <= LAT_MAX and LON_MIN <= beacon["lon"] <= LON_MAX):
                             now = time.monotonic()
+                            # Before anything else sees it: a beacon that fails
+                            # here must not reach the map, the DB or the labels.
+                            if not _admit(beacon, now):
+                                continue
                             with _lock:
                                 # Resolved here, not in _parse_beacon: deciding
                                 # whether this aircraft is on a rope needs the

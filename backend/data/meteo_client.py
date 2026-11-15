@@ -132,12 +132,23 @@ def _count_live(hit: bool, historical: bool = False) -> None:
     _live_usage[f"{prefix}cache_hits" if hit else f"{prefix}requests"] += 1
 
 
-async def fetch_meteo_features(lat: float, lon: float, forecast_h: int) -> dict:
+async def fetch_meteo_features(lat: float, lon: float, forecast_h: int,
+                               strict: bool = False) -> dict | None:
     """
     Open-Meteo: free, no API key needed.
     Returns fallback values if the network is unavailable.
 
     Cached per 0.1 degree cell for the current hour — see the note above.
+
+    Pass strict=True from anything that *trains* on the result, and get None
+    instead of _FALLBACK when the fetch fails — the same contract
+    fetch_meteo_historical and fetch_elevation_grid already have.  The live
+    sampler did not use one, so every timeout or refused request became a
+    training row: a real label attached to 18 degC, 500 W/m2 and 600 J/kg of
+    CAPE, whatever the hour and wherever the aircraft was.  Measured on the
+    buffer of 6 Nov 2026: 862 of 48,281 rows (1.8%), 70 of them positives,
+    spread over 16 days and every continent the feed covers.  At night the
+    invented 500 W/m2 also walked those rows straight past _MIN_SOLAR_GHI.
     """
     global _live_hour
     hour = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H")
@@ -191,8 +202,38 @@ async def fetch_meteo_features(lat: float, lon: float, forecast_h: int) -> dict:
         _live_cache[key] = out
         return out
     except Exception as exc:
-        log.warning(f"[meteo] fetch failed ({exc}) — using fallback values")
-        return _FALLBACK.copy()
+        log.warning(f"[meteo] fetch failed ({exc}) — "
+                    f"{'skipping' if strict else 'using fallback values'}")
+        return None if strict else _FALLBACK.copy()
+
+
+# The feature columns _FALLBACK lands in, with the value each one takes.  A real
+# hour matching all seven at once does not happen: across the 47,419 genuine rows
+# of that buffer the best single column matched 2.8% of the time and no row
+# matched more than two.
+_FALLBACK_SIGNATURE = (
+    (5,  _FALLBACK["temp_2m"]),
+    (6,  _FALLBACK["humidity"]),
+    (9,  _FALLBACK["cape"]),
+    (10, _FALLBACK["cin"]),
+    (11, _FALLBACK["solar_ghi"]),
+    (19, _FALLBACK["pbl_height"]),
+    (20, _FALLBACK["soil_temp"]),
+)
+
+
+def is_fallback_row(X):
+    """Boolean mask over feature rows built from _FALLBACK rather than a forecast.
+
+    For cleaning buffers collected before the sampler went strict.  Column
+    numbers follow build_feature_matrix; a test pins the two together.
+    """
+    import numpy as np
+    X = np.asarray(X)
+    mask = np.ones(len(X), dtype=bool)
+    for col, value in _FALLBACK_SIGNATURE:
+        mask &= np.isclose(X[:, col], value)
+    return mask
 
 
 # --- historical response cache -------------------------------------------

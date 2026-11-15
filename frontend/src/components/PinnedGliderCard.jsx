@@ -2,27 +2,48 @@ import { useState, useEffect } from 'react';
 import { fetchElevation } from '../services/api.js';
 import { useLang } from '../i18n/LanguageContext.jsx';
 
+// How far the aircraft may travel before the ground under it is looked up
+// again: ~500 m of latitude. Coarse enough that a glider at 100 km/h asks about
+// once every 18 s, fine enough that the reading keeps up with a ridge.
+const GROUND_STEP_DEG = 0.0045;
+
 export default function PinnedGliderCard({ glider, onUnpin }) {
   const { t } = useLang();
   const [groundElev,  setGroundElev]  = useState(null);
   const [elevLoading, setElevLoading] = useState(false);
 
-  // Re-fetch ground elevation only when a different glider is pinned.
-  // This is the exact point, not the lattice cell the wire's agl is sampled on,
-  // and it stays that way deliberately: the card is the one place a number is
-  // read rather than thresholded, so it should show the ground actually under
-  // the aircraft. See _attach_cached_agl in main.py for how the wire earns the
-  // same accuracy near the ground, which is where the two used to disagree.
+  // Which ~500 m patch the aircraft is over. The effect below keys on it, so
+  // the lookup follows the flight instead of being taken once.
+  const patchLat = glider ? Math.round(glider.lat / GROUND_STEP_DEG) : null;
+  const patchLon = glider ? Math.round(glider.lon / GROUND_STEP_DEG) : null;
+
+  // A different aircraft: the previous one's ground means nothing here.
   useEffect(() => {
-    if (!glider) { setGroundElev(null); return; }
+    setGroundElev(null);
+    setElevLoading(Boolean(glider));
+  }, [glider?.id]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Ground elevation at the exact point, not the lattice cell the wire's agl is
+  // sampled on, and it stays that way deliberately: the card is the one place a
+  // number is read rather than thresholded, so it should show the ground
+  // actually under the aircraft. See _attach_cached_agl in main.py for how the
+  // wire earns the same accuracy near the ground, which is where the two used
+  // to disagree.
+  //
+  // It used to be fetched once per pin. The altitude beside it kept updating,
+  // so AGL became "current altitude minus the ground where it was clicked": a
+  // glider pinned over a valley floor at 500 m and followed across a 2,000 m
+  // ridge read 1,500 m too high the whole way over. The last value stays on
+  // screen while the next one loads, so the row does not blink every 500 m.
+  useEffect(() => {
+    if (!glider) return undefined;
     let cancelled = false;
-    setElevLoading(true);
     fetchElevation(glider.lat, glider.lon)
-      .then(data => { if (!cancelled) setGroundElev(data.elevation); })
-      .catch(()  => { if (!cancelled) setGroundElev(null); })
+      .then(data => { if (!cancelled && data.elevation != null) setGroundElev(data.elevation); })
+      .catch(()  => { /* keep the last reading; the next patch retries */ })
       .finally(() => { if (!cancelled) setElevLoading(false); });
     return () => { cancelled = true; };
-  }, [glider?.id]);  // eslint-disable-line react-hooks/exhaustive-deps
+  }, [glider?.id, patchLat, patchLon]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!glider) return null;
 
@@ -46,13 +67,13 @@ export default function PinnedGliderCard({ glider, onUnpin }) {
         <div className="pin-metric">
           <span className="pin-metric-label">{t('ground')}</span>
           <span className="pin-metric-value">
-            {elevLoading ? '…' : groundElev != null ? `${groundElev} m` : '--'}
+            {groundElev != null ? `${groundElev} m` : elevLoading ? '…' : '--'}
           </span>
         </div>
         <div className="pin-metric">
           <span className="pin-metric-label">{t('agl')}</span>
           <span className={`pin-metric-value ${agl != null && agl < 200 ? 'agl-low' : ''}`}>
-            {elevLoading ? '…' : agl != null ? `${agl} m` : '--'}
+            {agl != null ? `${agl} m` : elevLoading ? '…' : '--'}
           </span>
         </div>
       </div>

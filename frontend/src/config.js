@@ -17,6 +17,12 @@ export const GLIDER_LON_MIN = -180.0;
 export const GLIDER_LON_MAX = 180.0;
 export const GRID_RES = 0.0005;   // degrees per cell (~50 m)
 
+// OGN aircraft types that gain height on lift alone: glider, hang glider,
+// paraglider. Mirrors SOARING_AC_TYPES in backend/data/ogn_client.py. Anything
+// that turns "circling and climbing" into lift on screen must test against this
+// *and* against under_tow — see isThermalEvidence in useBackend.js.
+export const SOARING_AC_TYPES = new Set([0x1, 0x6, 0x7]);
+
 // --- Backend origin -----------------------------------------------------------
 // Single-container deploy: the API shares the page's origin, so API_BASE is ''
 // and requests go to relative paths. Split deploy or local dev: point

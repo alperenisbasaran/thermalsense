@@ -572,6 +572,20 @@ class ThermalModel:
                 f"not coordinates on Earth — pre-fix grid-index rows"
             )
             X, y = X[keep], y[keep]
+
+        # Rows collected while Open-Meteo was failing carry _FALLBACK instead of
+        # a forecast — the sampler was not strict until it was measured (see
+        # fetch_meteo_features).  They are fabrications with real labels, so
+        # they go for good rather than being masked at fit time: nothing about
+        # them is worth the buffer cap they occupy.
+        from data.meteo_client import is_fallback_row
+        fake = is_fallback_row(X) if len(X) else np.zeros(0, dtype=bool)
+        if fake.any():
+            log.warning(
+                f"[model] dropping {int(fake.sum())} buffer samples built from the "
+                f"synthetic weather fallback, {int(y[fake].sum())} of them positives"
+            )
+            X, y = X[~fake], y[~fake]
         self._buffer_X = list(X)
         self._buffer_y = list(y)
         log.info(f"[model] buffer restored: {len(self._buffer_X)} samples from disk")
@@ -661,7 +675,7 @@ class ThermalModel:
         # Stop on whichever bound arrives first — see MAX_SAMPLE_GRIDS.
         deadline = time.monotonic() + SAMPLE_TIME_BUDGET_S
         out_of_time = out_of_quota = False
-        above_base = dark = on_ground = ambiguous = no_terrain = 0
+        above_base = dark = on_ground = ambiguous = no_terrain = no_meteo = 0
         # Ids already sampled this cycle.  A glider can be both a candidate and
         # a co-occupant of another candidate's grid; sampling it twice would
         # duplicate a row and let the same aircraft sit on both sides of the
@@ -683,7 +697,12 @@ class ThermalModel:
                 if usage["total"] >= usage["quota"]:
                     out_of_quota = True
                     break
-                meteo = await fetch_meteo_features(g["lat"], g["lon"], 0)
+                # strict: a failed fetch must skip the grid, not train on the
+                # synthetic stand-in (see fetch_meteo_features).
+                meteo = await fetch_meteo_features(g["lat"], g["lon"], 0, strict=True)
+                if meteo is None:
+                    no_meteo += 1
+                    continue
                 # Checked before the 7 MB feature matrix is built, not after:
                 # at night every candidate is dropped here, and building first
                 # spent the memory and the CPU to throw the result away.
@@ -777,6 +796,9 @@ class ThermalModel:
         if no_terrain:
             log.warning(f"[model] {no_terrain}/{len(candidates)} grids skipped — terrain "
                         f"unavailable (quota or upstream); not trained on a flat stand-in")
+        if no_meteo:
+            log.warning(f"[model] {no_meteo}/{len(candidates)} grids skipped — weather "
+                        f"unavailable; not trained on the synthetic fallback")
         if above_base:
             log.info(f"[model] {above_base}/{considered} dropped — above thermal base")
         if dark:

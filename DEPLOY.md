@@ -120,7 +120,7 @@ out permanently.
 > (`r/53.5/15.0/2500`) is evaluated by the OGN server, so glider coverage is
 > identical from any region; Open-Meteo and OpenTopoData are public APIs called
 > server-side. Only first-paint latency for Turkish users changes (~150 ms from
-> US East vs ~40 ms from Europe), and map tiles come from Esri/CARTO CDNs.
+> US East vs ~40 ms from Europe), and map tiles come from Esri's CDN.
 > Prefer a European region if offered, else `eastus`/`eastus2`.
 >
 > **Size note.** The portal defaults to something like *Standard_D2s_v3*
