@@ -4,6 +4,7 @@ import { MapContainer, TileLayer, useMap, useMapEvents } from 'react-leaflet';
 
 import { MAP_CENTER, MAP_ZOOM } from '../config.js';
 import { displayPosition } from '../services/deadReckon.js';
+import { RawDataCanvas, CompareControl, LAYER_BUILT } from './CompareLayer.jsx';
 
 // OGN aircraft types that gain height on lift alone: glider, hang glider, paraglider.
 // Mirrors SOARING_AC_TYPES in backend/data/ogn_client.py.
@@ -302,6 +303,7 @@ function ThermalBubbleCanvas({ activeThermals }) {
   return createPortal(
     <canvas
       ref={canvasRef}
+      className={LAYER_BUILT}
       style={{ position: 'absolute', top: 0, left: 0, pointerEvents: 'none', zIndex: 401 }}
     />,
     map.getContainer()
@@ -412,6 +414,7 @@ function OgnHeatmapCanvas({ gliders }) {
   return createPortal(
     <canvas
       ref={canvasRef}
+      className={LAYER_BUILT}
       style={{ position: 'absolute', top: 0, left: 0, pointerEvents: 'none', zIndex: 398 }}
     />,
     map.getContainer()
@@ -509,6 +512,7 @@ function HeatmapCanvas({ heatmap, gridMeta, pinnedIsTow, pinnedId, gliderPathsRe
   return createPortal(
     <canvas
       ref={canvasRef}
+      className={LAYER_BUILT}
       style={{ position: 'absolute', top: 0, left: 0, pointerEvents: 'none', zIndex: 450 }}
     />,
     map.getContainer()
@@ -585,6 +589,7 @@ function GliderCanvas({ gliders, pinnedId }) {
   return createPortal(
     <canvas
       ref={canvasRef}
+      className={LAYER_BUILT}
       style={{ position: 'absolute', top: 0, left: 0, pointerEvents: 'none', zIndex: 451 }}
     />,
     map.getContainer()
@@ -656,7 +661,7 @@ function FlyToController({ target }) {
 // -----------------------------------------------------------------------------
 // Public component
 // -----------------------------------------------------------------------------
-export default function ThermalMap({ heatmap, gridMeta, gliders, activeThermals = [], showOgnHeatmap = true, onMapClick, onGliderClick, onViewportChange, pinnedId, flyTarget, gliderPathsRef }) {
+export default function ThermalMap({ heatmap, gridMeta, gliders, activeThermals = [], showOgnHeatmap = true, onMapClick, onGliderClick, onViewportChange, pinnedId, flyTarget, gliderPathsRef, compare = false, rawInputs = null, noInsolation = false }) {
   // Passed to HeatmapCanvas as a plain boolean rather than the glider object:
   // that layer repaints the whole grid when its props change, and an object
   // would arrive with a fresh identity on every stream frame.
@@ -693,6 +698,15 @@ export default function ThermalMap({ heatmap, gridMeta, gliders, activeThermals 
       <HeatmapCanvas heatmap={heatmap} gridMeta={gridMeta} pinnedIsTow={pinnedIsTow} pinnedId={pinnedId} gliderPathsRef={gliderPathsRef} />
       <ThermalBubbleCanvas activeThermals={activeThermals} />
       <GliderCanvas gliders={gliders} pinnedId={pinnedId} />
+      {/* Before/after comparison. Everything above is the "after" half and is
+          only clipped, never altered; the raw canvas and the divider exist
+          only while the comparison is on. */}
+      {compare && (
+        <>
+          <RawDataCanvas gliders={gliders} gridMeta={gridMeta} rawInputs={rawInputs} pinnedId={pinnedId} gliderPathsRef={gliderPathsRef} />
+          <CompareControl gliders={gliders} activeThermals={activeThermals} gridMeta={gridMeta} rawInputs={rawInputs} noInsolation={noInsolation} />
+        </>
+      )}
       <MapClickHandler onMapClick={onMapClick} gliders={gliders} onGliderClick={onGliderClick} />
       <ViewportReporter onChange={onViewportChange} />
       <FlyToController target={flyTarget} />

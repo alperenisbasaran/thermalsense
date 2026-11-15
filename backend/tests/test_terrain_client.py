@@ -1,14 +1,16 @@
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+import math
+
 import numpy as np
 import pytest
 
 import data.terrain_client as tc
 from config import GRID_RADIUS, GRID_RES, TERRAIN_RES
 from data.terrain_client import (
-    fetch_elevation_batch, fetch_elevation_grid, grid_shape, snap_grid_centre,
-    MAX_BATCH_POINTS,
+    coarse_lattice, fetch_elevation_batch, fetch_elevation_grid, grid_shape,
+    snap_grid_centre, MAX_BATCH_POINTS,
 )
 
 
@@ -200,3 +202,48 @@ async def test_neighbouring_grids_reuse_cached_coarse_points(geo):
     tc._grid_cache.clear()                     # force a rebuild, keep the point cache
     await fetch_elevation_grid(45.63, 6.0)
     assert len(geo) - cold <= 1, "a one-step shift should not refetch the whole window"
+
+
+# --- the measured samples under a grid ---------------------------------------
+
+
+def _jagged_at(lat: float, lon: float) -> int:
+    """Deliberately not a plane.
+
+    Bilinear upsampling reproduces a linear field exactly, so on _elev_at every
+    fine cell already equals its own lattice value and any stride at all would
+    hand back numbers that look fetched.  Only a field with no structure between
+    neighbours can tell the samples from the interpolation.
+    """
+    return int(abs(math.sin(lat * 12_345.678 + lon * 9_876.543)) * 3_000)
+
+
+async def test_coarse_lattice_is_the_samples_that_were_fetched(geo, monkeypatch):
+    """The raw-data view draws these as "what the model was given", so they must
+    be the fetched elevations, each at the lattice point it was fetched for."""
+    monkeypatch.setitem(globals(), "_elev_at", _jagged_at)
+    clat, clon = snap_grid_centre(45.62, 6.0)
+    raw = coarse_lattice(await fetch_elevation_grid(45.62, 6.0))
+
+    n = round(2 * GRID_RADIUS / TERRAIN_RES) + 1
+    assert raw.shape == (n, n)
+    for i in range(n):
+        for j in range(n):
+            expect = _jagged_at(round(clat - GRID_RADIUS + i * TERRAIN_RES, 2),
+                                round(clon - GRID_RADIUS + j * TERRAIN_RES, 2))
+            assert round(float(raw[i, j])) == expect, f"sample ({i},{j}) is not the fetched value"
+
+
+async def test_coarse_lattice_survives_the_disk_cache(geo, monkeypatch):
+    """A restarted process rebuilds the fine grid from the stored coarse one;
+    the samples it reports must be the same ones, not a second-hand copy."""
+    monkeypatch.setitem(globals(), "_elev_at", _jagged_at)
+    first = coarse_lattice(await fetch_elevation_grid(45.62, 6.0)).copy()
+
+    tc._grid_cache.clear()
+    tc._elev_cache.clear()
+    fetched = len(geo)
+    again = coarse_lattice(await fetch_elevation_grid(45.62, 6.0))
+
+    assert len(geo) == fetched, "expected the grid to come back from disk"
+    assert np.array_equal(np.rint(again), np.rint(first))
