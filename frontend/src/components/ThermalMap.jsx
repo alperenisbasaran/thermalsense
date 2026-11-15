@@ -2,13 +2,9 @@ import { useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { MapContainer, TileLayer, useMap, useMapEvents } from 'react-leaflet';
 
-import { MAP_CENTER, MAP_ZOOM } from '../config.js';
+import { MAP_CENTER, MAP_ZOOM, PREDICT_RADIUS, SOARING_AC_TYPES } from '../config.js';
 import { displayPosition } from '../services/deadReckon.js';
 import { RawDataCanvas, CompareControl, LAYER_BUILT } from './CompareLayer.jsx';
-
-// OGN aircraft types that gain height on lift alone: glider, hang glider, paraglider.
-// Mirrors SOARING_AC_TYPES in backend/data/ogn_client.py.
-const SOARING_AC_TYPES = new Set([0x1, 0x6, 0x7]);
 
 // Pre-computed 256-entry RGBA palette: density 0→255 maps blue→cyan→green→yellow→red
 const _PALETTE = (() => {
@@ -29,9 +25,17 @@ const _PALETTE = (() => {
 // -----------------------------------------------------------------------------
 // Colour scale: transparent → blue-green → yellow → orange-red
 // -----------------------------------------------------------------------------
+// The floor and the opacity are set by what the model actually returns, not by
+// the 0-1 range it could. Measured on the live site (15 Nov 2026, ten daytime
+// forecast grids at four sites): the median cell sat between 3.5% and 25%, and
+// no grid peaked above 56%. Against that the old 5% floor left
+// holes — one grid drew 932 of its 40,401 cells — and 15% opacity over
+// satellite imagery made the rest a tint nobody could see, so a completed scan
+// looked like no scan. Only an exact zero is skipped now, which is what the
+// night guard sends; a low probability is drawn, in the "low" colour.
 function thermalColor(p) {
-  if (p < 0.05)  return null;  // skip near-zero cells entirely
-  const a = 0.15 + p * 0.55;
+  if (p < 0.005) return null;
+  const a = 0.34 + p * 0.40;
   if (p < 0.35) {
     const t = p / 0.35;
     return `rgba(20, ${Math.round(120 + t * 135)}, 255, ${a})`;
@@ -422,6 +426,42 @@ function OgnHeatmapCanvas({ gliders }) {
 }
 
 // -----------------------------------------------------------------------------
+// Scan footprint — the square a prediction covers, drawn whatever it contains
+//
+// The cells alone cannot say "a scan happened here": at night every one is zero
+// and none is painted, and from the opening Europe-wide view the whole 11 km
+// grid is under three pixels across. The outline is what makes a click land
+// somewhere visible; dashed while the request is in flight, solid once the
+// cells under it are real. Too small to read as a square, it becomes a ring.
+// -----------------------------------------------------------------------------
+const SCAN_RING_BELOW_PX = 16;
+
+function drawScanFootprint(ctx, map, lat, lon, half, pending) {
+  const sw = map.latLngToContainerPoint([lat - half, lon - half]);
+  const ne = map.latLngToContainerPoint([lat + half, lon + half]);
+  const x = Math.min(sw.x, ne.x);
+  const y = Math.min(sw.y, ne.y);
+  const w = Math.abs(ne.x - sw.x);
+  const h = Math.abs(ne.y - sw.y);
+
+  ctx.save();
+  ctx.setLineDash(pending ? [7, 5] : []);
+  // Dark under light, so the line holds on snow, sea and forest alike.
+  for (const [width, style] of [[3.5, 'rgba(0,0,0,0.55)'], [1.5, 'rgba(255,255,255,0.92)']]) {
+    ctx.lineWidth   = width;
+    ctx.strokeStyle = style;
+    ctx.beginPath();
+    if (Math.max(w, h) < SCAN_RING_BELOW_PX) {
+      ctx.arc(x + w / 2, y + h / 2, 11, 0, Math.PI * 2);
+    } else {
+      ctx.rect(x, y, w, h);
+    }
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// -----------------------------------------------------------------------------
 // Canvas layer — portalled into the Leaflet container so it overlays the tiles
 // -----------------------------------------------------------------------------
 // Deliberately does not take the glider array. Repainting the grid means up to
@@ -429,21 +469,21 @@ function OgnHeatmapCanvas({ gliders }) {
 // stream frame purely because a glider moved somewhere off in the corner. The
 // icons live on GliderCanvas above; all this needs of them is whether the
 // pinned one is a tow plane, which decides the path colour.
-function HeatmapCanvas({ heatmap, gridMeta, pinnedIsTow, pinnedId, gliderPathsRef }) {
+function HeatmapCanvas({ heatmap, gridMeta, pendingScan, pinnedIsTow, pinnedId, gliderPathsRef }) {
   const map       = useMap();
   const canvasRef = useRef(null);
 
   // Always-current data refs — lets the stable draw callback read latest values
   // without being recreated every render, eliminating stale-closure wipes from
   // Leaflet internal events (resize, pan-snap) fired after predict() returns.
-  const dataRef = useRef({ heatmap, gridMeta, pinnedIsTow, pinnedId });
-  dataRef.current = { heatmap, gridMeta, pinnedIsTow, pinnedId };
+  const dataRef = useRef({ heatmap, gridMeta, pendingScan, pinnedIsTow, pinnedId });
+  dataRef.current = { heatmap, gridMeta, pendingScan, pinnedIsTow, pinnedId };
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    const { heatmap, gridMeta, pinnedIsTow, pinnedId } = dataRef.current;
+    const { heatmap, gridMeta, pendingScan, pinnedIsTow, pinnedId } = dataRef.current;
 
     const { width, height } = map.getContainer().getBoundingClientRect();
     canvas.width  = width;
@@ -461,28 +501,54 @@ function HeatmapCanvas({ heatmap, gridMeta, pinnedIsTow, pinnedId, gliderPathsRe
       const latStep = (2 * radius) / (rows - 1);
       const lonStep = (2 * radius) / (cols - 1);
 
-      heatmap.forEach((prob, i) => {
-        const color = thermalColor(prob);
-        if (!color) return;
+      // Cell edges, projected once per axis and snapped to whole pixels. Web
+      // Mercator is separable — x depends only on longitude, y only on
+      // latitude — so cols+1 and rows+1 projections place all 40,401 cells,
+      // where projecting two corners per cell cost 80,802 on every map move.
+      // Snapping is what makes neighbours share an edge exactly: the old
+      // "+1 px" overlap painted every seam twice, and at an opacity high
+      // enough to see the grid at all that drew a lattice of darker lines
+      // across it. Each sample sits at the centre of the cell it colours, hence
+      // the half-step: the square straddles it rather than hanging north-east.
+      const xs = new Array(cols + 1);
+      const ys = new Array(rows + 1);
+      for (let c = 0; c <= cols; c++) {
+        xs[c] = Math.round(map.latLngToContainerPoint(
+          [lat, lon - radius + (c - 0.5) * lonStep]).x);
+      }
+      for (let r = 0; r <= rows; r++) {
+        ys[r] = Math.round(map.latLngToContainerPoint(
+          [lat - radius + (r - 0.5) * latStep, lon]).y);
+      }
 
-        const row     = Math.floor(i / cols);
-        const col     = i % cols;
-        // Each sample sits at the centre of the cell it colours, so the painted
-        // square straddles it rather than hanging off to the north-east.
-        const cellLat = lat - radius + row * latStep - latStep / 2;
-        const cellLon = lon - radius + col * lonStep - lonStep / 2;
+      for (let i = 0; i < heatmap.length; i++) {
+        const row = Math.floor(i / cols);
+        const col = i % cols;
+        const x = xs[col];
+        const w = xs[col + 1] - x;
+        const y = ys[row + 1];            // row index grows north, screen y south
+        const h = ys[row] - y;
+        // Zoomed far out most cells are narrower than a pixel and collapse to
+        // nothing; the one whose edge crosses the pixel boundary paints it.
+        if (w <= 0 || h <= 0) continue;
+        if (x >= width || y >= height || x + w <= 0 || y + h <= 0) continue;
 
-        const sw = map.latLngToContainerPoint([cellLat,            cellLon]);
-        const ne = map.latLngToContainerPoint([cellLat + latStep,  cellLon + lonStep]);
-
-        const x = Math.min(sw.x, ne.x);
-        const y = Math.min(sw.y, ne.y);
-        const w = Math.abs(sw.x - ne.x) + 1;
-        const h = Math.abs(sw.y - ne.y) + 1;
-
+        const color = thermalColor(heatmap[i]);
+        if (!color) continue;
         ctx.fillStyle = color;
         ctx.fillRect(x, y, w, h);
-      });
+      }
+
+      // Half a cell wider than the lattice, because each sample's square
+      // straddles it — the line then sits on the painted edge, not inside it.
+      drawScanFootprint(ctx, map, lat, lon, radius + latStep / 2, false);
+    }
+
+    // ---- scan in flight ----
+    // Centred on the clicked point; the answer comes back snapped onto the
+    // terrain lattice up to ~550 m away, which at this size is a line width.
+    if (pendingScan) {
+      drawScanFootprint(ctx, map, pendingScan.lat, pendingScan.lon, PREDICT_RADIUS, true);
     }
 
     // ---- clicked glider path (icons are drawn on the layer above this one) ----
@@ -507,7 +573,7 @@ function HeatmapCanvas({ heatmap, gridMeta, pinnedIsTow, pinnedId, gliderPathsRe
   });
 
   // Redraw whenever visible data changes
-  useEffect(() => { draw(); }, [draw, heatmap, gridMeta, pinnedIsTow, pinnedId]);
+  useEffect(() => { draw(); }, [draw, heatmap, gridMeta, pendingScan, pinnedIsTow, pinnedId]);
 
   return createPortal(
     <canvas
@@ -616,8 +682,13 @@ function MapClickHandler({ onMapClick, gliders, onGliderClick }) {
         const d  = Math.hypot(cp.x - pt.x, cp.y - pt.y);
         if (d < GLIDER_HIT_PX && d < bestDist) { best = g; bestDist = d; }
       }
-      if (best) onGliderClick(best);
-      else onMapClick(e.latlng.lat, e.latlng.lng);
+      if (best) { onGliderClick(best); return; }
+      // wrap(): Leaflet repeats the world sideways, and a click on a repeat
+      // reports the longitude it was drawn at — 390 for 30 E one copy over.
+      // Sent as is, the weather request fails and the terrain has no tile, so
+      // the scan came back built from fallback weather over flat ground.
+      const ll = e.latlng.wrap();
+      onMapClick(ll.lat, ll.lng);
     },
   });
   return null;
@@ -647,6 +718,37 @@ function ViewportReporter({ onChange }) {
 }
 
 // -----------------------------------------------------------------------------
+// Scan focus — bring the map to a scan that would otherwise be too small to see
+//
+// The map opens on the whole European soaring belt (zoom 5), where a degree of
+// longitude is ~23 px and the 0.1-degree grid a prediction returns is two or
+// three. Since that became the opening view, clicking bare map from it produced
+// a correct heatmap that occupied less space than the cursor. So a click that
+// would draw smaller than MIN_SCAN_PX flies in to fit the square; one made from
+// close enough to read it leaves the view exactly where the user put it.
+//
+// Driven by the click, not by the response: the flight and the request overlap,
+// so the dashed footprint is on screen while the answer is still on its way.
+// -----------------------------------------------------------------------------
+const MIN_SCAN_PX = 160;
+
+function ScanFocusController({ target }) {
+  const map = useMap();
+  useEffect(() => {
+    if (!target) return;
+    const r    = PREDICT_RADIUS;
+    const west = map.latLngToContainerPoint([target.lat, target.lon - r]);
+    const east = map.latLngToContainerPoint([target.lat, target.lon + r]);
+    if (Math.abs(east.x - west.x) >= MIN_SCAN_PX) return;
+    map.flyToBounds(
+      [[target.lat - r, target.lon - r], [target.lat + r, target.lon + r]],
+      { padding: [48, 48], maxZoom: 13, duration: 0.9 },
+    );
+  }, [target, map]);
+  return null;
+}
+
+// -----------------------------------------------------------------------------
 // Fly-to controller — responds to search selections
 // -----------------------------------------------------------------------------
 function FlyToController({ target }) {
@@ -661,7 +763,7 @@ function FlyToController({ target }) {
 // -----------------------------------------------------------------------------
 // Public component
 // -----------------------------------------------------------------------------
-export default function ThermalMap({ heatmap, gridMeta, gliders, activeThermals = [], showOgnHeatmap = true, onMapClick, onGliderClick, onViewportChange, pinnedId, flyTarget, gliderPathsRef, compare = false, rawInputs = null, noInsolation = false }) {
+export default function ThermalMap({ heatmap, gridMeta, pendingScan, scanFocus, gliders, activeThermals = [], showOgnHeatmap = true, onMapClick, onGliderClick, onViewportChange, pinnedId, flyTarget, gliderPathsRef, compare = false, rawInputs = null, noInsolation = false }) {
   // Passed to HeatmapCanvas as a plain boolean rather than the glider object:
   // that layer repaints the whole grid when its props change, and an object
   // would arrive with a fresh identity on every stream frame.
@@ -682,20 +784,31 @@ export default function ThermalMap({ heatmap, gridMeta, gliders, activeThermals 
         attribution="Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics, USDA FSA, USGS, Aerogrid, IGN, IGP, and the GIS User Community"
         maxZoom={18}
       />
-      {/* Road labels on top — CartoDB, free, no API key */}
+      {/* Place names and borders on top — Esri's reference layer, the overlay
+          published for World Imagery, from the same host and without a key.
+          It replaced CARTO's voyager_only_labels on 15 Nov 2026: requested
+          without an API key those tiles now come back with no labels at all
+          and "API KEY REQUIRED" printed across each one, so the watermark was
+          tiled over every view of the map. Note the {z}/{y}/{x} order — the
+          ArcGIS tile path puts the row first, the reverse of CARTO's. */}
       <TileLayer
-        url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}{r}.png"
-        // Terrain credit rides on this layer because the elevation behind every
-        // heatmap is Copernicus GLO-30, whose licence requires attribution
-        // wherever derived products are shown. Legal credit, not UI copy, so
-        // it is not translated — the tile credits beside it are not either.
-        attribution='&copy; <a href="https://carto.com">CARTO</a> | Terrain: Copernicus DEM &copy; DLR e.V. 2010&ndash;2014, &copy; Airbus Defence and Space GmbH 2014&ndash;2018, provided under COPERNICUS by the EU and ESA'
+        url="https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"
+        // The first half is the service's own copyrightText, as published in
+        // its metadata. Terrain credit rides on this layer because the
+        // elevation behind every heatmap is Copernicus GLO-30, whose licence
+        // requires attribution wherever derived products are shown. Legal
+        // credit, not UI copy, so it is not translated — the tile credits
+        // beside it are not either.
+        attribution='Labels: Esri, HERE, Garmin, &copy; OpenStreetMap contributors, and the GIS user community | Terrain: Copernicus DEM &copy; DLR e.V. 2010&ndash;2014, &copy; Airbus Defence and Space GmbH 2014&ndash;2018, provided under COPERNICUS by the EU and ESA'
+        // Same strength the CARTO labels were drawn at. This layer also
+        // carries administrative boundaries, which at full strength lay a
+        // white mesh of municipal borders over the terrain at zoom 9-11.
         opacity={0.7}
-        subdomains="abcd"
+        maxZoom={18}
       />
 
       {showOgnHeatmap && <OgnHeatmapCanvas gliders={gliders} />}
-      <HeatmapCanvas heatmap={heatmap} gridMeta={gridMeta} pinnedIsTow={pinnedIsTow} pinnedId={pinnedId} gliderPathsRef={gliderPathsRef} />
+      <HeatmapCanvas heatmap={heatmap} gridMeta={gridMeta} pendingScan={pendingScan} pinnedIsTow={pinnedIsTow} pinnedId={pinnedId} gliderPathsRef={gliderPathsRef} />
       <ThermalBubbleCanvas activeThermals={activeThermals} />
       <GliderCanvas gliders={gliders} pinnedId={pinnedId} />
       {/* Before/after comparison. Everything above is the "after" half and is
@@ -709,6 +822,7 @@ export default function ThermalMap({ heatmap, gridMeta, gliders, activeThermals 
       )}
       <MapClickHandler onMapClick={onMapClick} gliders={gliders} onGliderClick={onGliderClick} />
       <ViewportReporter onChange={onViewportChange} />
+      <ScanFocusController target={scanFocus} />
       <FlyToController target={flyTarget} />
     </MapContainer>
   );

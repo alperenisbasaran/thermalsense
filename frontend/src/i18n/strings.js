@@ -98,6 +98,9 @@ const STRINGS = {
     retrainFailed:      'Yeniden eğitim isteği başarısız',
     fetchingPrediction: 'Tahmin alınıyor…',
     clickMapToPredict:  'Termalleri tahmin etmek için haritaya tıklayın',
+    predictFailed:      'Tahmin alınamadı. Bağlantıyı kontrol edip tekrar tıklayın.',
+    noInsolationMap:    'Bu saatte güneş ışınımı yok, termal oluşamaz. İleri '
+                      + 'saatler için Tahmin sürgüsünü kaydırın.',
 
     // legend
     legendTitle:        'Termal olasılığı',
@@ -284,6 +287,10 @@ const STRINGS = {
     retrainFailed:      'Retrain request failed',
     fetchingPrediction: 'Fetching prediction…',
     clickMapToPredict:  'Click the map to predict thermals',
+    predictFailed:      'Could not get a prediction. Check the connection and '
+                      + 'click again.',
+    noInsolationMap:    'No sun at this hour, so no thermals can form. Drag the '
+                      + 'Forecast slider to look ahead.',
 
     legendTitle:        'Thermal probability',
     low:                'Low',

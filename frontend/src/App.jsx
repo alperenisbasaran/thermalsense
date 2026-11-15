@@ -39,10 +39,15 @@ export default function App() {
   const lastPinnedRef = useRef(null);
   const locationRef = useRef(null);
 
+  // The last bare-map click, as a fresh object each time so two clicks on the
+  // same spot both count. The map flies in to it when the scan would otherwise
+  // be too small to see — see ScanFocusController.
+  const [scanFocus, setScanFocus] = useState(null);
+
   const {
     heatmap, gridMeta, gliders, activeThermals,
     weather, predictAlt, noInsolation, rawInputs, loading, error, pinnedGlider: livePinned,
-    predict, setViewport, seedTrack, gliderPathsRef,
+    pendingScan, predict, setViewport, seedTrack, gliderPathsRef,
   } = useBackend(pinnedId);
 
   // A bare map click carries no altitude — the backend picks a working height
@@ -50,8 +55,22 @@ export default function App() {
   // is what the model was trained on.
   const handleMapClick = useCallback((lat, lon) => {
     locationRef.current = { lat, lon, alt: null };
+    setScanFocus({ lat, lon });
     predict(lat, lon, forecastH, null);
   }, [predict, forecastH]);
+
+  // Moving the forecast slider re-runs the scan already on the map. It used to
+  // change only what the *next* click would ask for: the label read "+6 h" over
+  // a heatmap still answering for now, and locationRef — kept for exactly this
+  // — was written on every click and never read. Debounced, because dragging
+  // across the range would otherwise queue one prediction per step behind
+  // PREDICT_CONCURRENCY=1.
+  useEffect(() => {
+    const loc = locationRef.current;
+    if (!loc) return undefined;
+    const id = setTimeout(() => predict(loc.lat, loc.lon, forecastH, loc.alt), 350);
+    return () => clearTimeout(id);
+  }, [forecastH, predict]);
 
 
   const handleRetrain = useCallback(async () => {
@@ -80,6 +99,14 @@ export default function App() {
 
   const heatmapMax = heatmap ? heatmap.reduce((a, b) => Math.max(a, b), 0) : null;
 
+  // One line over the map itself, where the click happened. The sidebar already
+  // carries these states, but a scan that draws nothing — no sun, or a failed
+  // request — left the map unchanged and the explanation 800 px to the right.
+  const mapNoteKey = loading ? 'fetchingPrediction'
+    : error                  ? error
+    : (heatmap && noInsolation) ? 'noInsolationMap'
+    : null;
+
   // livePinned comes from the socket when it carries the aircraft and from the
   // 5 s by-id poll when it does not, so it stays current wherever the map is
   // pointing. The ref only bridges the frame or two before the first of those
@@ -104,6 +131,8 @@ export default function App() {
           <ThermalMap
             heatmap={heatmap}
             gridMeta={gridMeta}
+            pendingScan={pendingScan}
+            scanFocus={scanFocus}
             gliders={visibleGliders}
             activeThermals={activeThermals}
             showOgnHeatmap={showOgnHeatmap}
@@ -124,6 +153,14 @@ export default function App() {
             rawInputs={rawInputs}
             noInsolation={noInsolation}
           />
+          {mapNoteKey && (
+            <div
+              className={`map-note${error && !loading ? ' error' : ''}`}
+              role="status"
+            >
+              {t(mapNoteKey)}
+            </div>
+          )}
         </div>
 
         <aside className="sidebar">
@@ -159,7 +196,7 @@ export default function App() {
           />
 
           {loading && <div className="status loading">{t('fetchingPrediction')}</div>}
-          {error   && <div className="status error">⚠ {error}</div>}
+          {error   && <div className="status error">⚠ {t(error)}</div>}
           {!loading && !error && !heatmap && <div className="status hint">{t('clickMapToPredict')}</div>}
 
           <div className="legend">

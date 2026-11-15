@@ -28,7 +28,7 @@ export default function WeatherBar({ weather, forecastH = 0, onForecastChange, l
             </>
           ) : (
             <span className="wx-hint">
-              {loading ? t('loading') : error ? `⚠ ${error}` : t('clickMapToLoad')}
+              {loading ? t('loading') : error ? `⚠ ${t(error)}` : t('clickMapToLoad')}
             </span>
           )}
         </div>

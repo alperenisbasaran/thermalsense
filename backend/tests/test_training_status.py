@@ -136,7 +136,7 @@ async def test_retrain_skips_grids_without_terrain(monkeypatch, caplog):
     async def gliders():
         return [glider]
 
-    async def meteo(lat, lon, h):
+    async def meteo(lat, lon, h, strict=False):
         return {"temp_2m": 20.0, "humidity": 0.5, "wind_speed": 3.0, "wind_dir": 0.0,
                 "cape": 800.0, "cin": 5.0, "solar_ghi": 700.0, "temp_850": 10.0,
                 "temp_500": -12.0, "lapse_rate": 6.3, "cape_base": 3000,

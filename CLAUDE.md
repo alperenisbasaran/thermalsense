@@ -22,7 +22,7 @@ All backend commands run from `backend/`. A Windows venv exists at
 `backend/.venv` with every dependency installed — prefer it.
 
 ```bash
-# Tests — 320 tests, ~8 s (needs pyarrow, or the archive tests skip)
+# Tests — 346 tests, ~8 s (needs pyarrow, or the archive tests skip)
 cd backend && ./.venv/Scripts/python.exe -m pytest tests/ -q
 
 # Single test file
@@ -66,7 +66,7 @@ the real `training_buffer.npz` with 3 stub rows — the buffer committed from
 | [backend/pipeline/feature_engineering.py](backend/pipeline/feature_engineering.py) | `build_feature_matrix` and `FEATURE_COUNT` (22 columns) |
 | [backend/pipeline/solar.py](backend/pipeline/solar.py) | Sun position, per-cell cos(incidence). Candidate feature, evaluation-only so far |
 | [backend/models/thermal_model.py](backend/models/thermal_model.py) | `ThermalModel`: load/save, MC-dropout predict, online retrain + quality gate, physics fallback |
-| [backend/data/ogn_client.py](backend/data/ogn_client.py) | APRS TCP client, beacon parser, SQLite history, retention purge |
+| [backend/data/ogn_client.py](backend/data/ogn_client.py) | APRS TCP client, beacon parser, plausibility gate (`_admit`), SQLite history, retention purge |
 | [backend/data/meteo_client.py](backend/data/meteo_client.py) | Open-Meteo forecast + historical NWP (no API key). Archived hours are cached to disk forever, keyed on the same (0.5°, hour) bucket `/seed` groups on — 10k calls/day against ~1M buckets a year means an uncached rebuild is months, not an afternoon, and Open-Meteo revises its archive so an uncached rebuild would not even reproduce the same buffer |
 | [backend/data/terrain_client.py](backend/data/terrain_client.py) | Elevation lookups, grid snapping, disk cache. `TERRAIN_SOURCE=copernicus` (default) reads Copernicus first and sends only the points it cannot answer to OpenTopoData; each source has its own cache directory so the two are never stitched into one grid |
 | [backend/data/dem_client.py](backend/data/dem_client.py) | Copernicus GLO-30 COG reader: range requests on public S3, no key, no quota. Verified against GDAL on 65 points (Türkiye, Alps, >50°N, both hemispheres, integer-degree edges): max difference 0.0000 m. A missing tile is `None`, never 0 m |
@@ -119,6 +119,16 @@ Breaking any of these has taken the app down or silently corrupted results befor
 8. **Driving the VM over ssh: always pass `-T` to `docker compose run/exec`.**
    Without it the command attaches stdin and eats the rest of a heredoc — this
    swallowed an `up -d app` line and caused a real outage on 15 Aug 2026.
+
+9. **Every beacon passes `_admit` before anything else sees it.** The type
+   allow-list trusts what a beacon says it is; the gate checks what it does.
+   Bypass it and shared ids come back as one icon crossing three countries
+   every few seconds — see "The feed carries ids that are not one aircraft".
+
+10. **Anything that trains passes `strict=True` to all three fetchers**
+    (`fetch_meteo_features`, `fetch_meteo_historical`, `fetch_elevation_grid`)
+    and skips the sample on `None`. The non-strict return is a stand-in made
+    for a display request; with a real label attached it is a fabrication.
 
 ## Model and training loop
 
@@ -278,6 +288,15 @@ Breaking any of these has taken the app down or silently corrupted results befor
   never seen the regime and was extrapolating — measured on the live site at
   0 W/m² it still returned a 54% peak. The flag is additive: an older bundle
   gets a dark map, which is right, just unexplained.
+- **The live sampler trained on invented weather until 15 Nov 2026.**
+  `fetch_meteo_features` returns `_FALLBACK` (18 °C, 500 W/m², CAPE 600) on any
+  failure, and `retrain()` took it for a forecast. Measured on the buffer of
+  6 Nov 2026: 862 of 48,281 rows (1.8%), 70 of them positives, over 16 days —
+  and the invented 500 W/m² carried night rows past `_MIN_SOLAR_GHI`. The
+  sampler is strict now, and `load()` drops rows matching
+  `meteo_client.is_fallback_row` (seven columns at once; no genuine row matched
+  more than two). **`/predict` still shows the fallback as if it were a
+  forecast** — deliberate for an offline demo, but nothing on screen says so.
 
 ## API
 
@@ -337,6 +356,52 @@ it arrives every `WS_FRAME_INTERVAL`, so preferring the poll would make the
 followed glider the least current thing on the map. Note the pinned *track*
 still only extends from `new_positions`, which stays viewport-filtered, so a
 path gains a gap while its aircraft is off-screen.
+
+**The feed carries ids that are not one aircraft.** Measured on the beacon DB
+(5 Nov 2026, 10:00–14:00 UTC, 2,013 ids): 134 ids made a leg no glider can fly
+and 17 jumped more than 100 km. `FLR1900FF`, typed "tow plane", moved up to
+628 km 253 times in four hours at 10,700 m — several airliners under one
+address. `FLR18008D`, a "hang glider", reports 537–1,333 km/h. Three ids
+reported altitudes above 64,000 m (a negative value through an unsigned field).
+`_admit` in `ogn_client.py` sits between the parser and everything else:
+
+- above `_MAX_ALT_M` (15,000 m) the beacon is dropped;
+- above `_MAX_SPEED_KMH` (400; the feed's 99th percentile is 163) it is dropped
+  and the id takes a strike;
+- a fix taken *before* the one on the track is dropped — a second receiver
+  running 2–3 s behind, or a tracker uploading its backlog, otherwise walks the
+  icon backwards (0.55% of consecutive beacons);
+- a position the track cannot reach at 400 km/h is held as a candidate. A lone
+  outlier never shows. The track moves only when a second, *different* fix
+  agrees (17% of consecutive beacons are one fix relayed twice, which confirms
+  nothing) — and an established track still reporting does not move even then.
+  A relocation is a strike.
+
+Three strikes in 30 min quarantines the id for 30 min, extended while it keeps
+earning them. Replaying those four hours: impossible legs shown fell from 822
+to 34 for 0.39% of beacons rejected, and that understates it, because the DB
+keeps no speed and the speed check could not take part. Counters are under
+`feed.implausible` in `/training/status`. **Two aircraft genuinely sharing an
+id show as one steady track** — the first to report; the other is refused
+until the first has been silent for `_HANDOVER_S` (60 s).
+
+**A scan has to be visible to count as an answer.** "Clicking bare map does
+nothing" was three separate causes, all measured on the live site on
+15 Nov 2026, and the backend was answering correctly through every one:
+
+- The map opens at zoom 5, where the 0.1° grid is under 3 px wide. A bare-map
+  click that would draw narrower than `MIN_SCAN_PX` (160) now flies in to fit
+  it (`ScanFocusController`). A glider click does not move the map.
+- At night the grid is zeroed and no cell is painted. The footprint outline is
+  drawn regardless of content — dashed while the request is in flight — and a
+  note over the map says why it is empty.
+- By day the model returns mostly 3–25% (no grid of ten peaked above 56%), and
+  the renderer skipped cells under 5% and drew the rest at ~15% opacity. One
+  grid drew 932 of 40,401 cells. Only an exact zero is skipped now.
+
+The forecast slider re-runs the scan on the map; it used to change only what
+the *next* click would ask for. Predictions carry a sequence number, so a slow
+earlier response can no longer overwrite a later click's heatmap.
 
 **The raw data comparison splits the map by clipping, not by drawing.** The
 sidebar toggle (or `?compare=1`) puts a draggable divider across the map: left
@@ -418,6 +483,12 @@ separate x and y pixel sizes.
 - `frontend/src/config.js` `LAT/LON_MIN/MAX` is the **prediction grid** area
   (İnönü/Eskişehir), not the glider feed. Widening it explodes the grid; live
   glider bounds are the separate `GLIDER_*` constants.
+- Map labels come from Esri's `Reference/World_Boundaries_and_Places` layer,
+  not CARTO. Requested without a key, CARTO's `voyager_only_labels` tiles now
+  return no labels and "API KEY REQUIRED" across each one (seen 15 Nov 2026),
+  which tiled a watermark over every view. The ArcGIS tile path is
+  `{z}/{y}/{x}` — row first. The Copernicus terrain credit rides on this
+  layer's attribution string; carry it along if the layer is swapped again.
 - `ENABLE_LANDCOVER` is off by default. The plumbing is complete and tested, but
   measured through `evaluation/` the change moves the within-group score by −0.04
   to +0.02 depending only on the CV fold seed. Flipping it on requires a retrain

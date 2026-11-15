@@ -1,16 +1,33 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { fetchPrediction, fetchGliderTrack, fetchGlider } from '../services/api.js';
-import { LAT_MIN, LAT_MAX, LON_MIN, LON_MAX, GRID_RES, PREDICT_RADIUS, WS_URL, GLIDER_LAT_MIN, GLIDER_LAT_MAX, GLIDER_LON_MIN, GLIDER_LON_MAX } from '../config.js';
+import { LAT_MIN, LAT_MAX, LON_MIN, LON_MAX, GRID_RES, PREDICT_RADIUS, WS_URL, GLIDER_LAT_MIN, GLIDER_LAT_MAX, GLIDER_LON_MIN, GLIDER_LON_MAX, SOARING_AC_TYPES } from '../config.js';
 
 const GRID_COLS = Math.round((LON_MAX - LON_MIN) / GRID_RES);
 const GRID_ROWS = Math.round((LAT_MAX - LAT_MIN) / GRID_RES);
 
 /**
- * Convert a real-world lat/lon to grid x/y within the configured bounding box.
- * x grows east, y grows south (screen convention).
+ * May this aircraft's climb be drawn as a thermal? The client-side twin of
+ * is_thermal_evidence in backend/data/ogn_client.py: a soaring type, and not
+ * on the end of a rope.
+ */
+function isThermalEvidence(g) {
+  return SOARING_AC_TYPES.has(g.ac_type) && !g.under_tow;
+}
+
+/**
+ * Greedy proximity clustering of circling, climbing aircraft into the "active
+ * thermal" bubbles on the map.
+ *
+ * This used to take every circling climber, tugs included. A tow plane circles
+ * while it climbs at 2-3 m/s with a glider behind it, so each aerotow drew a
+ * confirmed thermal over the airfield — the exact false positive the backend's
+ * is_thermal_evidence exists to prevent, and which the live-activity layer
+ * right beside this one already filtered out.
  */
 function clusterCirclingGliders(gliders, radiusDeg = 0.012) {
-  const circling = gliders.filter(g => g.circling && g.vario > 0.5);
+  const circling = gliders.filter(
+    g => isThermalEvidence(g) && g.circling && g.vario > 0.5
+  );
   const unclustered = [...circling];
   const clusters = [];
   while (unclustered.length > 0) {
@@ -34,6 +51,10 @@ function clusterCirclingGliders(gliders, radiusDeg = 0.012) {
   return clusters;
 }
 
+/**
+ * Convert a real-world lat/lon to grid x/y within the configured bounding box.
+ * x grows east, y grows south (screen convention).
+ */
 function latlonToGridXY(lat, lon) {
   const x = Math.round((lon - LON_MIN) / (LON_MAX - LON_MIN) * (GRID_COLS - 1));
   const y = Math.round((LAT_MAX - lat) / (LAT_MAX - LAT_MIN) * (GRID_ROWS - 1));
@@ -64,7 +85,16 @@ export function useBackend(pinnedId = null) {
   // to report it, which just leaves those rows out of the comparison.
   const [rawInputs,   setRawInputs]   = useState(null);
   const [loading,     setLoading]     = useState(false);
+  // A translation key, not text, so the message follows a language switch.
   const [error,       setError]       = useState(null);
+  // Where the scan in flight is centred, so the map can mark the spot before
+  // the answer exists. A cold prediction takes ~3 s, and until it lands a click
+  // on bare map changed nothing the eye could find.
+  const [pendingScan, setPendingScan] = useState(null);
+  // Bumped per request. Two clicks in quick succession used to race: whichever
+  // response arrived last won, so the heatmap could belong to the first click
+  // while the weather bar and the map marker described the second.
+  const predictSeqRef = useRef(0);
   // Last direct fetch of the followed glider — the copy used only when the
   // viewport-scoped socket is not carrying it. See the poll effect below.
   const [polledPinned, setPolledPinned] = useState(null);
@@ -126,10 +156,13 @@ export function useBackend(pinnedId = null) {
   }, []);
 
   const predict = useCallback(async (lat, lon, forecastH = 0, alt = null) => {
+    const seq = ++predictSeqRef.current;
     setLoading(true);
     setError(null);
+    setPendingScan({ lat, lon });
     try {
       const data = await fetchPrediction(lat, lon, forecastH, alt);
+      if (seq !== predictSeqRef.current) return;   // superseded by a later click
 
       setHeatmap(data.heatmap);
       // Draw at the grid's own centre, not the point we asked about. The backend
@@ -159,10 +192,15 @@ export function useBackend(pinnedId = null) {
       // this prediction's terrain on the previous prediction's ground.
       setRawInputs(data.inputs ?? null);
       setWeather(data.weather);
-    } catch (e) {
-      setError(e.message);
+    } catch {
+      if (seq === predictSeqRef.current) setError('predictFailed');
     } finally {
-      setLoading(false);
+      // Only the newest request may clear the busy state, or an older one
+      // finishing first would hide the marker of the scan still in flight.
+      if (seq === predictSeqRef.current) {
+        setLoading(false);
+        setPendingScan(null);
+      }
     }
   }, []);
 
@@ -272,6 +310,6 @@ export function useBackend(pinnedId = null) {
   const activeThermals = useMemo(() => clusterCirclingGliders(gliders), [gliders]);
 
   return { heatmap, gridMeta, gliders, activeThermals, weather, predictAlt,
-           noInsolation, rawInputs, loading, error, pinnedGlider,
+           noInsolation, rawInputs, loading, error, pinnedGlider, pendingScan,
            predict, setViewport, seedTrack, gliderPathsRef };
 }
