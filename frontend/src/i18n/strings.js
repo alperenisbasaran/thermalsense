@@ -74,6 +74,24 @@ const STRINGS = {
     retrainModel:       'Modeli yeniden eğit',
     retrainTitle:       'Modeli en güncel OGN verisiyle yeniden eğit',
 
+    // raw data / product comparison (before/after divider on the map)
+    compareToggle:      'Ham veri karşılaştırması',
+    compareHint:        '(önce / sonra)',
+    compareHandle:      'Ham veri ile üzerine kurulan arasındaki ayırıcı — '
+                      + 'karşılaştırmak için sürükleyin',
+    compareBefore:      'Önce',
+    compareAfter:       'Sonra',
+    compareRawTitle:    'Ham veri',
+    compareBuiltTitle:  'Üzerine kurduğumuz',
+    rawBeacons:         '{n} uçak: bildirilen konum, irtifa ve tırmanma hızı',
+    rawElevation:       '{n} yükseklik ölçümü, ~{km} km arayla',
+    rawWeather:         'Tüm alan için tek bir hava durumu örneği',
+    rawNoGrid:          'Arazi ve hava girdilerini görmek için haritaya tıklayın',
+    builtCells:         '{n} hücre, her biri {f} özellik → termal olasılığı',
+    builtCellsOnly:     '{n} hücre → termal olasılığı',
+    builtCircling:      '{n} uçak daire çiziyor (dönüş hızından)',
+    builtThermals:      '{n} aktif termal (kümelenen tırmanışlardan)',
+
     // statuses
     retrainAlready:     'Zaten eğitiliyor…',
     retrainStarted:     'Yeniden eğitim başladı',
@@ -246,6 +264,23 @@ const STRINGS = {
     ognDensityHint:     '(OGN density)',
     retrainModel:       'Retrain model',
     retrainTitle:       'Trigger model retraining on latest OGN data',
+
+    compareToggle:      'Raw data comparison',
+    compareHint:        '(before / after)',
+    compareHandle:      'Divider between the raw data and what is built on it — '
+                      + 'drag to compare',
+    compareBefore:      'Before',
+    compareAfter:       'After',
+    compareRawTitle:    'Raw data',
+    compareBuiltTitle:  'What we build on it',
+    rawBeacons:         '{n} aircraft: reported position, altitude and climb rate',
+    rawElevation:       '{n} elevation samples, ~{km} km apart',
+    rawWeather:         'One weather sample for the whole area',
+    rawNoGrid:          'Click the map to see the terrain and weather inputs',
+    builtCells:         '{n} cells, {f} features each → lift probability',
+    builtCellsOnly:     '{n} cells → lift probability',
+    builtCircling:      '{n} circling (from turn rate)',
+    builtThermals:      ({ n }) => `${n} active thermal${n === 1 ? '' : 's'} (from clustered climbs)`,
 
     retrainAlready:     'Already retraining…',
     retrainStarted:     'Retraining started',

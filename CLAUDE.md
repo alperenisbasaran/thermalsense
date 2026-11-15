@@ -22,7 +22,7 @@ All backend commands run from `backend/`. A Windows venv exists at
 `backend/.venv` with every dependency installed — prefer it.
 
 ```bash
-# Tests — 340 tests, ~8 s (needs pyarrow, or the archive tests skip)
+# Tests — 346 tests, ~8 s (needs pyarrow, or the archive tests skip)
 cd backend && ./.venv/Scripts/python.exe -m pytest tests/ -q
 
 # Single test file
@@ -78,6 +78,7 @@ the real `training_buffer.npz` with 3 stub rows — the buffer committed from
 | [backend/scripts/seed_historical.py](backend/scripts/seed_historical.py) | **Legacy, refuses to run without `--legacy`.** Not what `POST /seed` calls — that is `ThermalModel.seed_from_history`. Its rows have `alt_agl = 0`, v1 labels and a smaller meteo set, so the app sets them aside |
 | [frontend/src/hooks/useBackend.js](frontend/src/hooks/useBackend.js) | Prediction fetch, WebSocket lifecycle, viewport declaration, glider paths |
 | [frontend/src/components/ThermalMap.jsx](frontend/src/components/ThermalMap.jsx) | Leaflet map, heatmap canvas, glider markers and tracks |
+| [frontend/src/components/CompareLayer.jsx](frontend/src/components/CompareLayer.jsx) | Raw data / product comparison: the before/after divider, the raw-inputs canvas and the two caption cards |
 | [frontend/src/i18n/strings.js](frontend/src/i18n/strings.js) | TR/EN dictionaries — must stay in key parity |
 | [DEPLOY.md](DEPLOY.md) | Hosting rationale, sizing, TLS, operating runbook |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Data flow, feature pipeline, training loop, resource budget |
@@ -301,7 +302,7 @@ Breaking any of these has taken the app down or silently corrupted results befor
 
 | Endpoint | Notes |
 |---|---|
-| `GET /predict?lat=&lon=&alt=&forecast_h=` | Heatmap, std and weather. `alt` is observer AMSL; omitting it means terrain mean + 1000 m |
+| `GET /predict?lat=&lon=&alt=&forecast_h=` | Heatmap, std and weather. `alt` is observer AMSL; omitting it means terrain mean + 1000 m. `inputs` carries what the grid was built from — the fetched elevation samples and the feature width — for the comparison view |
 | `GET /ogn/live?wait_agl=` | Live snapshot. AGL from the warm cache unless `wait_agl=true` |
 | `GET /ogn/search?q=&limit=` | Server-side id search — the client no longer holds a full glider list |
 | `GET /ogn/track/{id}` | Last 8 h of positions (runs in a thread; the table holds millions of rows) |
@@ -401,6 +402,30 @@ nothing" was three separate causes, all measured on the live site on
 The forecast slider re-runs the scan on the map; it used to change only what
 the *next* click would ask for. Predictions carry a sequence number, so a slow
 earlier response can no longer overwrite a later click's heatmap.
+
+**The raw data comparison splits the map by clipping, not by drawing.** The
+sidebar toggle (or `?compare=1`) puts a draggable divider across the map: left
+of it the inputs as they arrive, right of it the map as normally drawn. Every
+canvas still spans the whole map and carries `LAYER_BUILT` or `LAYER_RAW`;
+`index.css` clips each to its side of `--cmp-split` on the Leaflet container, so
+dragging redraws nothing — which matters when one layer is a 40,401-cell grid.
+
+- **A new map layer must carry one of the two classes**, or it draws across
+  both halves and the comparison stops meaning anything.
+- **The raw half shows only what arrived.** Reported positions, never
+  `displayPosition`; every aircraft the same dot, because circling, tow and
+  thermal are conclusions; and the elevation squares are the 121 values
+  `/predict` actually fetched (`terrain_client.coarse_lattice`), not the
+  interpolated grid thinned out. That last one holds only because the upsample
+  runs endpoint to endpoint — change the interpolation and
+  `test_coarse_lattice_is_the_samples_that_were_fetched` is what says so.
+- **The divider uses native listeners**, not React props. It sits inside
+  Leaflet's container, whose handlers run before the event reaches React's
+  root, so a synthetic handler stops a press only after the map has started
+  panning and read the release as a click asking for a prediction.
+- Weather has no mark on the raw half on purpose. It is one sample cached per
+  0.1° cell, so a pin at any exact point would claim a precision it lacks; the
+  dashed outline of the patch it is spread across is the honest picture.
 
 ## Resource budget
 

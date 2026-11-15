@@ -654,6 +654,118 @@ body {
    satellite tiles paint, and a white flash under them reads as a bug. */
 .leaflet-container { background: #1a1f2e; }
 
+/* ── Raw data / product comparison ── */
+/* The split is clipping, not drawing. Every map canvas still spans the whole
+   map; a layer carries one of these two classes and is clipped to its side of
+   --cmp-split, which CompareControl sets on the Leaflet container. Dragging the
+   divider therefore redraws no canvas. Without .cmp-on nothing is clipped, so
+   the classes are inert while the comparison is off. */
+.cmp-on .cmp-layer-built { clip-path: inset(0 0 0 var(--cmp-split, 50%)); }
+.cmp-on .cmp-layer-raw   { clip-path: inset(0 calc(100% - var(--cmp-split, 50%)) 0 0); }
+
+/* Zero-width anchor at the split: the grab strip and both cards hang off it, so
+   each card stays on the half it describes wherever the divider goes.
+   z-index: over every canvas (highest is 451), under Leaflet's controls (1000).
+   Colours are literal, not theme tokens, for the reason given at the top of
+   this file: the map and what is drawn on it stay dark in either theme. */
+.cmp-divider {
+  position: absolute;
+  top: 0; bottom: 0;
+  left: var(--cmp-split, 50%);
+  width: 0;
+  z-index: 900;
+  cursor: default;
+}
+
+/* Wider than the line it draws: a 2px target is not something anyone can grab,
+   least of all on a touch screen. touch-action stops the browser claiming the
+   drag as a page scroll before the pointer handlers see it. */
+.cmp-grab {
+  position: absolute;
+  top: 0; bottom: 0;
+  left: -12px;
+  width: 24px;
+  cursor: ew-resize;
+  touch-action: none;
+  outline: none;        /* the focus ring is drawn on the knob instead */
+}
+.cmp-grab::before {
+  content: '';
+  position: absolute;
+  top: 0; bottom: 0;
+  left: 11px;
+  width: 2px;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.45);
+}
+.cmp-knob {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  width: 34px; height: 34px;
+  border-radius: 50%;
+  background: #fff;
+  color: #1a202c;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 6px rgba(0,0,0,0.55);
+}
+.cmp-grab:focus-visible .cmp-knob {
+  box-shadow: 0 0 0 3px #63b3ed, 0 1px 6px rgba(0,0,0,0.55);
+}
+
+.cmp-card {
+  position: absolute;
+  top: 12px;
+  width: max-content;
+  max-width: min(236px, 40vw);
+  background: rgba(15,17,23,0.88);
+  color: #e2e8f0;
+  border: 1px solid rgba(255,255,255,0.16);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.cmp-card.raw   { right: 20px; }
+.cmp-card.built { left: 20px; }
+
+.cmp-card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.cmp-tag {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.16);
+  color: #cbd5e0;
+}
+.cmp-card.built .cmp-tag { background: #2b6cb0; color: #fff; }
+.cmp-title { font-size: 12px; font-weight: 700; color: #fff; }
+
+.cmp-rows { list-style: none; display: flex; flex-direction: column; gap: 4px; }
+.cmp-rows li { display: flex; align-items: flex-start; gap: 7px; }
+.cmp-hint { color: #a0aec0; font-style: italic; }
+
+/* Each swatch is the mark its row is drawn with on the map, so the card doubles
+   as the key for its half. */
+.cmp-swatch { flex-shrink: 0; width: 9px; height: 9px; margin-top: 3px; }
+.cmp-swatch.beacon   { border-radius: 50%; background: #fff; }
+.cmp-swatch.elev     { background: linear-gradient(to right, rgb(76,29,149), rgb(253,242,255));
+                       box-shadow: 0 0 0 1px rgba(255,255,255,0.9); }
+.cmp-swatch.area     { border: 1px dashed rgba(255,255,255,0.8); }
+.cmp-swatch.heat     { border-radius: 2px; background: linear-gradient(to right,
+                         rgb(20,180,255), rgb(80,255,80), rgb(255,200,0), rgb(255,30,0)); }
+.cmp-swatch.circling { border-radius: 50%; background: #FFD700; }
+.cmp-swatch.thermal  { border-radius: 50%; background: radial-gradient(circle, #FF8C00 40%, rgba(255,140,0,0.3) 100%); }
+
 /* Thermal-peak colour scale. Lived as inline styles on the value; moved here so
    the light theme can darken them - #9ae6b4 on white is barely a colour. */
 .peak-high { color: var(--danger); }

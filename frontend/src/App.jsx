@@ -22,6 +22,12 @@ export default function App() {
   const [retrainMsgKey, setRetrainMsgKey] = useState('');
   const [showAirborneOnly, setShowAirborneOnly] = useState(false);
   const [showOgnHeatmap,   setShowOgnHeatmap]   = useState(true);
+  // Before/after divider across the map: raw inputs on one side, what is built
+  // from them on the other. ?compare=1 opens straight into it, for the same
+  // reason ?panel=training exists — it is a view people link to.
+  const [compare, setCompare] = useState(
+    () => new URLSearchParams(window.location.search).get('compare') === '1'
+  );
   const [flyTarget, setFlyTarget] = useState(null);
   const [pinnedId, setPinnedId] = useState(null);
   // Opens straight into the panel with ?panel=training, so a training node can
@@ -40,7 +46,7 @@ export default function App() {
 
   const {
     heatmap, gridMeta, gliders, activeThermals,
-    weather, predictAlt, noInsolation, loading, error, pinnedGlider: livePinned,
+    weather, predictAlt, noInsolation, rawInputs, loading, error, pinnedGlider: livePinned,
     pendingScan, predict, setViewport, seedTrack, gliderPathsRef,
   } = useBackend(pinnedId);
 
@@ -143,6 +149,9 @@ export default function App() {
             pinnedId={pinnedId}
             flyTarget={flyTarget}
             gliderPathsRef={gliderPathsRef}
+            compare={compare}
+            rawInputs={rawInputs}
+            noInsolation={noInsolation}
           />
           {mapNoteKey && (
             <div
@@ -169,6 +178,8 @@ export default function App() {
             onAirborneToggle={setShowAirborneOnly}
             showOgnHeatmap={showOgnHeatmap}
             onOgnHeatmapToggle={setShowOgnHeatmap}
+            compare={compare}
+            onCompareToggle={setCompare}
             onRetrain={CAN_RETRAIN ? handleRetrain : null}
             onOpenTraining={() => setShowTraining(true)}
           />

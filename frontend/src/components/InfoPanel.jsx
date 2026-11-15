@@ -26,6 +26,7 @@ export default function InfoPanel({
   gliders, totalGliders,
   showAirborneOnly, onAirborneToggle,
   showOgnHeatmap, onOgnHeatmapToggle,
+  compare, onCompareToggle,
   onRetrain,
   onOpenTraining,
 }) {
@@ -137,6 +138,17 @@ export default function InfoPanel({
           onChange={e => onOgnHeatmapToggle(e.target.checked)}
         />
         {t('liveActivityLayer')} <span className="toggle-hint">{t('ognDensityHint')}</span>
+      </label>
+
+      {/* Splits the map with a draggable divider: the inputs as they arrive on
+          one side, everything worked out from them on the other. */}
+      <label className="toggle-row">
+        <input
+          type="checkbox"
+          checked={compare}
+          onChange={e => onCompareToggle(e.target.checked)}
+        />
+        {t('compareToggle')} <span className="toggle-hint">{t('compareHint')}</span>
       </label>
 
       {/* Hidden in production unless an admin token is configured — the endpoint

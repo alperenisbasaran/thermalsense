@@ -80,6 +80,10 @@ export function useBackend(pinnedId = null) {
   // heatmap is a stated absence rather than a prediction. Defaults to false so
   // a backend too old to send the flag behaves exactly as before.
   const [noInsolation, setNoInsolation] = useState(false);
+  // What the current heatmap was built from — the fetched elevation samples and
+  // the feature width — for the raw-data comparison. Null for a backend too old
+  // to report it, which just leaves those rows out of the comparison.
+  const [rawInputs,   setRawInputs]   = useState(null);
   const [loading,     setLoading]     = useState(false);
   // A translation key, not text, so the message follows a language switch.
   const [error,       setError]       = useState(null);
@@ -183,6 +187,10 @@ export function useBackend(pinnedId = null) {
           : null
       );
       setNoInsolation(Boolean(data.no_insolation));
+      // Set in the same batch as the grid it belongs to: the samples are placed
+      // with gridMeta's centre and radius, so one without the other would draw
+      // this prediction's terrain on the previous prediction's ground.
+      setRawInputs(data.inputs ?? null);
       setWeather(data.weather);
     } catch {
       if (seq === predictSeqRef.current) setError('predictFailed');
@@ -302,6 +310,6 @@ export function useBackend(pinnedId = null) {
   const activeThermals = useMemo(() => clusterCirclingGliders(gliders), [gliders]);
 
   return { heatmap, gridMeta, gliders, activeThermals, weather, predictAlt,
-           noInsolation, loading, error, pinnedGlider, pendingScan,
+           noInsolation, rawInputs, loading, error, pinnedGlider, pendingScan,
            predict, setViewport, seedTrack, gliderPathsRef };
 }
