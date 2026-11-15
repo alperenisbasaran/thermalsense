@@ -153,9 +153,13 @@ export default function App() {
             rawInputs={rawInputs}
             noInsolation={noInsolation}
           />
+          {/* With the comparison on, its two caption cards hang from the top of
+              the divider — which starts at the centre, exactly where this note
+              sits — so the note drops to the bottom edge instead of covering
+              the labels that say which half is which. */}
           {mapNoteKey && (
             <div
-              className={`map-note${error && !loading ? ' error' : ''}`}
+              className={`map-note${error && !loading ? ' error' : ''}${compare ? ' low' : ''}`}
               role="status"
             >
               {t(mapNoteKey)}

@@ -426,6 +426,10 @@ dragging redraws nothing — which matters when one layer is a 40,401-cell grid.
 - Weather has no mark on the raw half on purpose. It is one sample cached per
   0.1° cell, so a pin at any exact point would claim a precision it lacks; the
   dashed outline of the patch it is spread across is the honest picture.
+- The scan note (`.map-note`) is not a map layer: it sits outside the Leaflet
+  container and is never clipped. It drops to the bottom edge while the
+  comparison is on, because the caption cards hang from the top of the divider
+  and the divider starts at the centre — where the note otherwise sits.
 
 ## Resource budget
 
