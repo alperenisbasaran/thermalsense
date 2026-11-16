@@ -1,16 +1,20 @@
 import asyncio
-import json
 import logging
+import re
+from collections import OrderedDict
 import httpx
 import numpy as np
 from pathlib import Path
 from scipy.ndimage import zoom as ndimage_zoom
-from config import SRTM_BASE, GRID_RES, TERRAIN_RES, GRID_RADIUS, DATA_DIR, TERRAIN_SOURCE
+from config import (SRTM_BASE, GRID_RES, TERRAIN_RES, GRID_RADIUS, DATA_DIR, TERRAIN_SOURCE,
+                    TERRAIN_GRID_CACHE, TERRAIN_POINT_CACHE)
 from data import dem_client
 
 log = logging.getLogger(__name__)
 
-# Session-level cache keyed by (lat, lon) rounded to DEFAULT_POINT_DP.
+# Point elevations keyed by (lat, lon) rounded to DEFAULT_POINT_DP, least
+# recently used first.  Bounded by TERRAIN_POINT_CACHE — see config.py for what
+# the unbounded version cost.
 #
 # The key is not just a bucket: it is the coordinate the elevation was actually
 # sampled at, because fetch_elevation_batch asks OpenTopoData about the rounded
@@ -18,7 +22,7 @@ log = logging.getLogger(__name__)
 # `dp` share one dict — a fine lookup of a point that happens to sit on the
 # coarse lattice hits the existing entry, since both round to the same
 # coordinate and that coordinate is where the elevation came from.
-_elev_cache: dict[tuple[float, float], int] = {}
+_elev_cache: "OrderedDict[tuple[float, float], int]" = OrderedDict()
 
 # 2 dp = ~1 km cells.  Coarse on purpose: it matches TERRAIN_RES, so the points
 # a grid fetch resolves serve point lookups nearby for free.  Callers that need
@@ -29,7 +33,38 @@ DEFAULT_POINT_DP = 2
 # Grid cache keyed by (snapped lat, snapped lon, radius) — terrain grids are static.
 # The key must be the centre the array was actually built around; see
 # snap_grid_centre for why anything looser hands out the wrong patch of ground.
-_grid_cache: dict[tuple[float, float, float], np.ndarray] = {}
+# Bounded by TERRAIN_GRID_CACHE; every grid is also on disk, so falling out of
+# here costs a 1 KB read and an upsample, not a fetch.
+_grid_cache: "OrderedDict[tuple[float, float, float], np.ndarray]" = OrderedDict()
+
+
+def _recall(cache: dict, key):
+    """`cache[key]`, marked most recently used.  None on a miss.
+
+    Reads count as use, not only writes: the points under an airfield are
+    fetched once and then read on every frame, and a cache that aged them by
+    fetch time would evict exactly the entries that are hit most.
+
+    Pop and re-insert rather than OrderedDict.move_to_end, so the plain dicts
+    tests put in place of these caches behave the same way.  No lock: both
+    caches are only ever touched from the event loop.  Reaching one from a
+    worker thread would need a lock here first — between the pop and the
+    re-insert the key is absent, and eviction iterates.
+    """
+    try:
+        value = cache.pop(key)
+    except KeyError:
+        return None
+    cache[key] = value
+    return value
+
+
+def _remember(cache: dict, key, value, limit: int) -> None:
+    """Store `key` as most recently used and drop the oldest entries past `limit`."""
+    cache.pop(key, None)
+    cache[key] = value
+    while len(cache) > max(limit, 0):
+        del cache[next(iter(cache))]
 
 # --- Disk cache ---------------------------------------------------------------
 # Terrain does not change, so these are worth keeping across restarts. Measured
@@ -47,9 +82,40 @@ _grid_cache: dict[tuple[float, float, float], np.ndarray] = {}
 # a fresh cache rather than reading the other source's values.
 _CACHE_DIR = DATA_DIR / "cache" / ("terrain-copernicus" if TERRAIN_SOURCE == "copernicus"
                                    else "terrain")
-_POINT_CACHE_PATH = _CACHE_DIR / "points.json"
-_point_writes_since_flush = 0
+
+# --- Point journal ------------------------------------------------------------
+# Points are appended as they are fetched, 20 bytes each, instead of the whole
+# cache being rewritten as JSON every 50 points.  That rewrite was 16 MB, a
+# second of event loop and a 58 MB spike at 770,770 points, and it grew with
+# every point it saved.  An append costs what the new points cost.
+#
+# Fixed-width records are what make an interrupted write harmless: a file whose
+# size is not a whole number of records ends in a torn one, the tail is ignored
+# on load, and the next flush replaces the file instead of appending after it.
+# A text line cut short can parse as a shorter number — 850 m read back as 8.
+_POINT_REC = np.dtype([("lat", "<f8"), ("lon", "<f8"), ("elev", "<i4")])
 _POINT_FLUSH_EVERY = 50
+# The journal is rewritten from memory once it holds this many times the cache.
+# Until then it is append-only, so on disk it stays under 2 x 200,000 x 20 B =
+# 8 MB however long the process runs.
+_JOURNAL_SLACK = 2
+_point_unsaved: list[tuple[float, float, int]] = []   # fetched, not yet on disk
+_journal_records = 0     # whole records in the journal, as far as this process knows
+_journal_clean = True    # False: the file may end mid-record, so replace, never append
+
+# The whole-cache file this replaces.  Read once, to carry a deployed cache
+# over, and never written again.
+_LEGACY_ENTRY = re.compile(r'"([-+0-9.eE]+),([-+0-9.eE]+)"\s*:\s*(-?[0-9]+)')
+
+
+def _journal_path() -> Path:
+    # Resolved per call, not bound at import: tests redirect _CACHE_DIR, and a
+    # path computed up front would keep pointing at the real cache.
+    return _CACHE_DIR / "points.bin"
+
+
+def _legacy_points_path() -> Path:
+    return _CACHE_DIR / "points.json"
 
 
 def _grid_path(key: tuple[float, float, float]) -> Path:
@@ -80,35 +146,140 @@ def snap_grid_centre(lat: float, lon: float) -> tuple[float, float]:
             round(round(lon / TERRAIN_RES) * TERRAIN_RES, 6))
 
 
+def _i4(elev) -> int:
+    """An elevation as the journal stores it.  Clamped so that no value an
+    upstream can return — a nodata sentinel, say — is able to make a flush raise."""
+    return max(-2**31, min(2**31 - 1, int(elev)))
+
+
+def _cache_point(key: tuple[float, float], elev: int) -> None:
+    """Record a freshly fetched elevation: in memory now, on disk at the next flush."""
+    _remember(_elev_cache, key, elev, TERRAIN_POINT_CACHE)
+    _point_unsaved.append((key[0], key[1], _i4(elev)))
+
+
+def _restore_points(rec: np.ndarray) -> int:
+    """Put journal records into the cache, oldest first.  Returns how many went in."""
+    # The journal is in order of use as far as anything on disk can know it, so
+    # the tail is the part worth having when it holds more than the cache does.
+    rec = rec[len(rec) - min(len(rec), max(TERRAIN_POINT_CACHE, 0)):]
+    # A record that names no place on Earth is not an elevation.  NaN fails both
+    # comparisons, so it goes too.
+    rec = rec[(np.abs(rec["lat"]) <= 90) & (np.abs(rec["lon"]) <= 180)]
+    for la, lo, v in zip(rec["lat"].tolist(), rec["lon"].tolist(), rec["elev"].tolist()):
+        _remember(_elev_cache, (la, lo), v, TERRAIN_POINT_CACHE)
+    return len(rec)
+
+
+def _import_legacy_points(path: Path) -> int:
+    """Carry the old points.json over.  Returns how many entries it held.
+
+    json.loads on that file is part of what is being removed: at 770,770 entries
+    the load peaked 69 MB above the 196 MB it went on to keep.  The entries are
+    matched one at a time instead and passed through the same bound as
+    everything else, so the file's own text is all that is held beyond the
+    cache.  It was written in fetch order, so what survives the bound is the
+    most recently fetched TERRAIN_POINT_CACHE.
+    """
+    text = path.read_text(encoding="utf-8")
+    seen = 0
+    for m in _LEGACY_ENTRY.finditer(text):
+        try:
+            key = (float(m[1]), float(m[2]))
+        except ValueError:
+            continue
+        _remember(_elev_cache, key, int(m[3]), TERRAIN_POINT_CACHE)
+        seen += 1
+    return seen
+
+
 def load_caches() -> None:
     """Restore the point-elevation cache from disk. Called once from the lifespan."""
-    if not _POINT_CACHE_PATH.exists():
-        return
-    try:
-        raw = json.loads(_POINT_CACHE_PATH.read_text(encoding="utf-8"))
-        for k, v in raw.items():
-            lat_s, lon_s = k.split(",")
-            _elev_cache[(float(lat_s), float(lon_s))] = v
-        log.info(f"[terrain] restored {len(_elev_cache)} point elevations from disk")
-    except Exception as exc:
-        log.warning(f"[terrain] point cache unreadable ({exc}) — starting empty")
+    # Broad excepts throughout, as before: this runs in the lifespan, and a
+    # cache that cannot be read must cost a cold start, never the start itself.
+    global _journal_records, _journal_clean
+    path, legacy = _journal_path(), _legacy_points_path()
+    if path.exists():
+        try:
+            size = path.stat().st_size
+            whole = size // _POINT_REC.itemsize
+            kept = _restore_points(np.fromfile(path, dtype=_POINT_REC, count=whole))
+        except Exception as exc:
+            # Whatever is there cannot be extended safely; the first flush
+            # replaces it with what this process has learned by then.
+            _journal_clean = False
+            log.warning(f"[terrain] point journal unreadable ({exc}) — starting empty")
+            return
+        _journal_records = whole
+        _journal_clean = size == whole * _POINT_REC.itemsize
+        log.info(f"[terrain] restored {kept:,} of {whole:,} point elevations from disk"
+                 + ("" if _journal_clean else " (last record torn, ignored)"))
+    elif legacy.exists():
+        try:
+            seen = _import_legacy_points(legacy)
+        except Exception as exc:
+            log.warning(f"[terrain] old point cache unreadable ({exc}) — starting empty")
+            return
+        log.info(f"[terrain] imported {len(_elev_cache):,} of {seen:,} point elevations "
+                 f"from {legacy.name}")
+        # Write the journal now, so the import happens once.  The old file is
+        # left where it is: the previous image reads it, and a rollback should
+        # find its cache.  Nothing reads it once points.bin exists.
+        try:
+            _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            _rewrite_journal()
+        except Exception as exc:
+            log.warning(f"[terrain] could not write the point journal ({exc}) — "
+                        f"the import will repeat at the next start")
+
+
+def _rewrite_journal() -> None:
+    """Replace the journal with exactly what is cached, least recently used first."""
+    global _journal_records, _journal_clean
+    n = len(_elev_cache)
+    rec = np.empty(n, dtype=_POINT_REC)
+    if n:
+        coords = np.fromiter((c for key in _elev_cache for c in key),
+                             dtype="<f8", count=2 * n)
+        rec["lat"], rec["lon"] = coords[0::2], coords[1::2]
+        rec["elev"] = np.fromiter(map(_i4, _elev_cache.values()), dtype="<i4", count=n)
+    path = _journal_path()
+    tmp = path.with_suffix(".bin.tmp")
+    tmp.write_bytes(rec.tobytes())
+    tmp.replace(path)        # atomic — a kill mid-write leaves the old journal whole
+    _journal_records, _journal_clean = n, True
 
 
 def flush_point_cache(force: bool = False) -> None:
-    """Persist the point cache, batched so a seed run isn't writing on every hit."""
-    global _point_writes_since_flush
-    if not force and _point_writes_since_flush < _POINT_FLUSH_EVERY:
+    """Append the points fetched since the last flush to the journal.
+
+    Batched so a seed run is not writing on every fetch.  The cost is that of the
+    new points alone, except when the journal has outgrown the cache or may end
+    mid-record; then it is replaced by the cache as it stands — at most
+    TERRAIN_POINT_CACHE records, a few megabytes, about once every two days at
+    the rate the training node meets new ground.
+    """
+    global _journal_records, _journal_clean
+    if not _point_unsaved or (not force and len(_point_unsaved) < _POINT_FLUSH_EVERY):
         return
     try:
         _CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        tmp = _POINT_CACHE_PATH.with_suffix(".json.tmp")
-        tmp.write_text(
-            json.dumps({f"{la},{lo}": v for (la, lo), v in _elev_cache.items()}),
-            encoding="utf-8",
-        )
-        tmp.replace(_POINT_CACHE_PATH)   # atomic — a crash mid-write can't corrupt it
-        _point_writes_since_flush = 0
+        outgrown = (_journal_records + len(_point_unsaved)
+                    > _JOURNAL_SLACK * max(TERRAIN_POINT_CACHE, 0))
+        if outgrown or not _journal_clean:
+            _rewrite_journal()
+        else:
+            _journal_clean = False      # until the append is known to be whole
+            with open(_journal_path(), "ab") as fh:
+                fh.write(np.array(_point_unsaved, dtype=_POINT_REC).tobytes())
+            _journal_records += len(_point_unsaved)
+            _journal_clean = True
+        _point_unsaved.clear()
     except OSError as exc:
+        # The points are still cached and still owed to disk; the next flush
+        # retries.  Bounded all the same, or a full disk turns this list into
+        # the leak the cache used to be.
+        del _point_unsaved[: max(0, len(_point_unsaved) - max(TERRAIN_POINT_CACHE, 0))]
         log.warning(f"[terrain] could not persist point cache ({exc})")
 
 # One pooled client — a seed run makes thousands of calls, and a fresh
@@ -174,9 +345,17 @@ def api_usage() -> dict:
 
 
 def source_usage() -> dict:
-    """Which source serves terrain, with today's work for each."""
+    """Which source serves terrain, with today's work for each.
+
+    `cached` is what this process holds against its two bounds.  Nothing reported
+    these while they had no bound, and the growth was found from kernel OOM
+    records instead of from here.
+    """
     return {"source": TERRAIN_SOURCE, "api": api_usage(),
-            "copernicus": dem_client.usage() if TERRAIN_SOURCE == "copernicus" else None}
+            "copernicus": dem_client.usage() if TERRAIN_SOURCE == "copernicus" else None,
+            "cached": {"grids": len(_grid_cache), "grids_max": TERRAIN_GRID_CACHE,
+                       "points": len(_elev_cache), "points_max": TERRAIN_POINT_CACHE,
+                       "points_unsaved": len(_point_unsaved)}}
 
 
 async def _get_with_retry(client: httpx.AsyncClient, url: str, max_retries: int = 3) -> httpx.Response:
@@ -221,7 +400,7 @@ def cached_elevation(lat: float, lon: float, dp: int = DEFAULT_POINT_DP) -> int 
     `dp` must match the `dp` the point was fetched under — see
     fetch_elevation_batch for why the two are one and the same number.
     """
-    return _elev_cache.get((round(lat, dp), round(lon, dp)))
+    return _recall(_elev_cache, (round(lat, dp), round(lon, dp)))
 
 
 MAX_BATCH_POINTS = 100      # opentopodata.org caps a single request at 100 locations
@@ -249,15 +428,14 @@ async def fetch_elevation_batch(
 
     Returns {(lat, lon): elevation_m | None} for every input pair.
     """
-    global _point_writes_since_flush
-
     out: dict[tuple, int | None] = {}
     pending: dict[tuple[float, float], list[tuple[float, float]]] = {}
 
     for lat, lon in latlon_pairs:
         key = (round(lat, dp), round(lon, dp))
-        if key in _elev_cache:
-            out[(lat, lon)] = _elev_cache[key]
+        hit = _recall(_elev_cache, key)
+        if hit is not None:             # not truthiness: 0 m is sea level
+            out[(lat, lon)] = hit
         else:
             pending.setdefault(key, []).append((lat, lon))
 
@@ -277,8 +455,7 @@ async def fetch_elevation_batch(
             if v is None:
                 continue
             elev = int(round(v))
-            _elev_cache[key] = elev
-            _point_writes_since_flush += 1
+            _cache_point(key, elev)
             for pair in pending[key]:
                 out[pair] = elev
         keys = [k for k in keys if got.get(k) is None]
@@ -304,8 +481,7 @@ async def fetch_elevation_batch(
             items = []
         for key, item in zip(chunk, items):
             elev = int(item["elevation"] or 0)
-            _elev_cache[key] = elev
-            _point_writes_since_flush += 1
+            _cache_point(key, elev)
             for pair in pending[key]:
                 out[pair] = elev
         flush_point_cache()
@@ -373,8 +549,9 @@ async def fetch_elevation_grid(lat: float, lon: float,
     """
     clat, clon = snap_grid_centre(lat, lon)
     key = (clat, clon, radius)
-    if key in _grid_cache:
-        return _grid_cache[key]
+    cached = _recall(_grid_cache, key)
+    if cached is not None:
+        return cached
 
     n_coarse   = round((2 * radius) / TERRAIN_RES) + 1   # 11 for default params
     fine_shape = grid_shape(radius)                      # (201, 201)
@@ -396,7 +573,7 @@ async def fetch_elevation_grid(lat: float, lon: float,
     if path.exists():
         try:
             fine = _upsample(np.load(path))
-            _grid_cache[key] = fine
+            _remember(_grid_cache, key, fine, TERRAIN_GRID_CACHE)
             return fine
         except Exception as exc:
             log.warning(f"[terrain] cached grid {path.name} unreadable ({exc}) — refetching")
@@ -413,7 +590,7 @@ async def fetch_elevation_grid(lat: float, lon: float,
             raise RuntimeError(f"{missing}/{len(pts)} points unresolved")
         coarse = np.array([elevs[p] for p in pts], dtype=float).reshape(n_coarse, n_coarse)
         fine = _upsample(coarse)
-        _grid_cache[key] = fine
+        _remember(_grid_cache, key, fine, TERRAIN_GRID_CACHE)
         try:
             _CACHE_DIR.mkdir(parents=True, exist_ok=True)
             np.save(path, coarse)

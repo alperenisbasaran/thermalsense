@@ -22,7 +22,7 @@ All backend commands run from `backend/`. A Windows venv exists at
 `backend/.venv` with every dependency installed — prefer it.
 
 ```bash
-# Tests — 346 tests, ~8 s (needs pyarrow, or the archive tests skip)
+# Tests — 370 tests, ~15 s (needs pyarrow, or the archive tests skip)
 cd backend && ./.venv/Scripts/python.exe -m pytest tests/ -q
 
 # Single test file
@@ -52,10 +52,13 @@ docker compose up -d --build
 There is no lint or typecheck step configured. `pytest.ini` sets
 `asyncio_mode = auto`, so async tests need no decorator.
 
-`tests/conftest.py` points the model, buffer, beacon DB and archive paths at
-each test's `tmp_path` (autouse). Keep it that way: before it, a run replaced
-the real `training_buffer.npz` with 3 stub rows — the buffer committed from
-17 Sep to 30 Sep 2026 was that file — and wrote into a local `ogn_history.db`.
+`tests/conftest.py` points the model, buffer, beacon DB, archive and terrain
+cache paths at each test's `tmp_path` (autouse). Keep it that way: before it, a
+run replaced the real `training_buffer.npz` with 3 stub rows — the buffer
+committed from 17 Sep to 30 Sep 2026 was that file — and wrote into a local
+`ogn_history.db`. The terrain cache was the same story until 16 Nov 2026: the
+local `cache/terrain-copernicus/points.json` held 200 entries, all
+`(50.x, 1.x) -> 100`, beside 16,443 real grids.
 
 ## Layout
 
@@ -68,7 +71,7 @@ the real `training_buffer.npz` with 3 stub rows — the buffer committed from
 | [backend/models/thermal_model.py](backend/models/thermal_model.py) | `ThermalModel`: load/save, MC-dropout predict, online retrain + quality gate, physics fallback |
 | [backend/data/ogn_client.py](backend/data/ogn_client.py) | APRS TCP client, beacon parser, plausibility gate (`_admit`), SQLite history, retention purge |
 | [backend/data/meteo_client.py](backend/data/meteo_client.py) | Open-Meteo forecast + historical NWP (no API key). Archived hours are cached to disk forever, keyed on the same (0.5°, hour) bucket `/seed` groups on — 10k calls/day against ~1M buckets a year means an uncached rebuild is months, not an afternoon, and Open-Meteo revises its archive so an uncached rebuild would not even reproduce the same buffer |
-| [backend/data/terrain_client.py](backend/data/terrain_client.py) | Elevation lookups, grid snapping, disk cache. `TERRAIN_SOURCE=copernicus` (default) reads Copernicus first and sends only the points it cannot answer to OpenTopoData; each source has its own cache directory so the two are never stitched into one grid |
+| [backend/data/terrain_client.py](backend/data/terrain_client.py) | Elevation lookups, grid snapping, disk cache. `TERRAIN_SOURCE=copernicus` (default) reads Copernicus first and sends only the points it cannot answer to OpenTopoData; each source has its own cache directory so the two are never stitched into one grid. Both in-memory caches are bounded LRUs, and points persist as an append-only journal (`points.bin`) — see "Resource budget" |
 | [backend/data/dem_client.py](backend/data/dem_client.py) | Copernicus GLO-30 COG reader: range requests on public S3, no key, no quota. Verified against GDAL on 65 points (Türkiye, Alps, >50°N, both hemispheres, integer-degree edges): max difference 0.0000 m. A missing tile is `None`, never 0 m |
 | [backend/data/cog.py](backend/data/cog.py) | Minimal COG parsing shared by land cover and elevation: little-endian tiled DEFLATE, integer and float samples, horizontal and floating-point predictors |
 | [backend/data/landcover_client.py](backend/data/landcover_client.py) | ESA WorldCover 10 m via COG range reads. Off by default (`ENABLE_LANDCOVER`) |
@@ -458,6 +461,30 @@ The deployment target is 2 vCPU / 896 MB, and most odd-looking choices come from
 - `_disk_guard()` shortens retention below `MIN_FREE_DISK_GB=3`, capped at 2
   rounds — a DB created before `auto_vacuum=INCREMENTAL` never returns freed
   pages to the OS, so waiting for free space to recover would spin forever.
+- **Every module-level cache needs a bound, and a number that reports it.** The
+  two in `terrain_client.py` had neither, and between 7 and 15 Nov 2026 the app
+  container was OOM-killed 28 times — ten on the last day, under an hour apart.
+  `_grid_cache` kept a 316 KB array for every grid centre ever asked about
+  (~2,900 new a day, 300 an hour at a weekend midday). `_elev_cache` restored
+  770,770 points at every start (196 MB, 267 B each), and `flush_point_cache`
+  re-serialised all of them every 50 new points: 16 MB of JSON, a second of
+  event loop and a 58 MB spike, three times inside one retrain cycle. All 27
+  kills that could be placed fell inside a retrain cycle (22) or the nightly
+  seed (5), and the baseline rose ~30 MB a day. Now `TERRAIN_GRID_CACHE` (64)
+  and `TERRAIN_POINT_CACHE` (200,000) bound them, least recently *used* first —
+  a read counts, or the points under an airfield would age out by fetch time
+  while being hit every frame. Points are appended to `points.bin` as 20-byte
+  records and the file is rewritten only when it passes twice the bound.
+  Measured on a copy of the node's cache: point cache 196 → 56 MB, a flush
+  1.0 s → 0.13 ms, start-up load 0.95 → 0.18 s. Sizes are under
+  `terrain.cached` in `/training/status`. The old `points.json` is imported
+  once and then left alone, because the previous image still reads it.
+- **The 896 MB figures in this file no longer describe the node.** `free -m`
+  there reported 3,905 MB total on 15 Nov 2026, with `mem_limit` at 700m (not
+  the 600m the nightly-seed note above records) and `BEACON_RETENTION_DAYS`
+  at 2 in `docker-compose.yml`. Nobody has re-derived the limits for the
+  larger box; raising `mem_limit` would have hidden the cache growth, not
+  fixed it.
 
 **Upstream ceilings:** Copernicus DEM has no key and no quota (the terrain
 default); OpenTopoData 1000 calls/day and 1 req/s, now only the fallback — as
@@ -492,7 +519,9 @@ separate x and y pixel sizes.
 - `ENABLE_LANDCOVER` is off by default. The plumbing is complete and tested, but
   measured through `evaluation/` the change moves the within-group score by −0.04
   to +0.02 depending only on the CV fold seed. Flipping it on requires a retrain
-  — the columns change meaning, not width.
+  — the columns change meaning, not width. **Bound its cache first:**
+  `landcover_client._grid_cache` is still a plain dict that keeps one stack per
+  grid centre forever, the same shape as the terrain leak of Nov 2026.
 
 ## Housekeeping
 

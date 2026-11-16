@@ -27,6 +27,36 @@ SRTM_BASE         = "https://api.opentopodata.org/v1/srtm30m"
 # OpenTopoData, so the two sources are cached separately and never mixed.
 TERRAIN_SOURCE    = os.getenv("TERRAIN_SOURCE", "copernicus").strip().lower()
 
+# How much terrain one process keeps in memory, least recently used out first.
+# Both caches were plain dicts with no limit, and between 7 and 15 Nov 2026 that
+# was 28 OOM kills, the last ten in one day and under an hour apart:
+#
+#   - a fine grid is 316 KB and one was kept for every centre ever asked about.
+#     The node met ~2,900 new centres a day, 300 an hour at a weekend midday;
+#   - 770,770 point elevations were restored at every start (196 MB resident,
+#     267 B each) and the whole set was re-serialised every 50 new points: a
+#     second of event loop and a 58 MB spike, up to three times in one cycle.
+#
+# Every kill that could be placed fell inside a retrain cycle or the nightly
+# seed — the two jobs that fetch terrain — and the baseline rose ~30 MB a day,
+# so the container was about a week from dying in its first cycle every time.
+#
+# Neither bound costs accuracy, only a re-read.  A grid that falls out comes
+# back from its 1 KB file in ~1.2 ms; a point that falls out is refetched, which
+# on Copernicus is free.  64 grids is 20 MB and more than one cycle can touch
+# (MAX_SAMPLE_GRIDS).  200,000 points is about two days of new ground at the
+# rate the node meets it.
+#
+# Measured against a copy of the node's own cache, same image, 16 Nov 2026:
+#
+#                         before              after
+#   point cache           196 MB              56 MB (295 B a point)
+#   start-up load         0.95 s, +69 MB      0.18 s
+#   flush of 50 points    1.0 s, +58 MB       0.13 ms, nothing measurable
+#   600 grid centres      185 MB kept         64 grids kept
+TERRAIN_GRID_CACHE  = int(os.getenv("TERRAIN_GRID_CACHE", "64"))
+TERRAIN_POINT_CACHE = int(os.getenv("TERRAIN_POINT_CACHE", "200000"))
+
 # Candidate grids one retrain cycle may sample, and how long it may spend doing
 # it.  The old fixed 20 was chosen to spare the terrain API's 1,000/day — which
 # Copernicus removed — and it held collection to ~200 samples a day, weeks away
