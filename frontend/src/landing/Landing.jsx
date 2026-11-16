@@ -14,22 +14,29 @@ const MAP_URL      = '/';
 const COMPARE_URL  = '/?compare=1';
 const TRAINING_URL = '/?panel=training';
 
-// Within-(day, cell, hour) ranking score, measured 27 Sep 2026 — the table in
-// CLAUDE.md under "What the score actually is". Ordered worst to best so the
-// served model reads as the bottom line.
+// Within-(day, cell, hour) ranking score, micro AUC with 95% bootstrap CI.
+// `python -m evaluation.evaluate --variant base --by-hour`, run 16 Nov 2026 on
+// the 6 Nov 2026 buffer minus its invented-weather rows (47,419 rows, 6,259
+// positives, 2,009 mixed-label units). "xgb base (served)" is rowModel;
+// physics_fallback is rowPhysics. Ordered worst to best so the model reads as
+// the bottom line. Re-run and replace these together with the copy in
+// strings.js (scoreMeta, scoreRead, regionNote, turkiyeText).
 const SCORES = [
-  { key: 'rowAlt',     value: 0.473, lo: 0.440, hi: 0.512 },
-  { key: 'rowTerrain', value: 0.519, lo: 0.484, hi: 0.556 },
-  { key: 'rowSun',     value: 0.532, lo: 0.503, hi: 0.562 },
-  { key: 'rowModel',   value: 0.542, lo: 0.519, hi: 0.567, emphasis: true },
+  { key: 'rowAlt',     value: 0.501, lo: 0.474, hi: 0.529 },
+  { key: 'rowPhysics', value: 0.502, lo: 0.490, hi: 0.513 },
+  { key: 'rowTerrain', value: 0.525, lo: 0.493, hi: 0.557 },
+  { key: 'rowSun',     value: 0.551, lo: 0.520, hi: 0.580 },
+  { key: 'rowModel',   value: 0.570, lo: 0.539, hi: 0.601, emphasis: true },
 ];
 
-// Paired deltas against the shipped setup, same groups, 1,500 resamples.
-const TRIED = [
-  { key: 'triedSun',   value: -0.019, lo: -0.051, hi: 0.010 },
-  { key: 'triedRank',  value: -0.013, lo: -0.046, hi: 0.015 },
-  { key: 'triedSix',   value:  0.010, lo: -0.009, hi: 0.027 },
-  { key: 'triedPrior', value:  0.014, lo: -0.002, hi: 0.029 },
+// Same run, served model by region (evaluation/regions.py). Türkiye is left out
+// of the table because it is not measurable — 1 mixed-label group of the 30
+// needed — and turkiyeText says so in words instead.
+const REGIONS = [
+  { key: 'regAlps',    value: 0.612, lo: 0.569, hi: 0.653 },
+  { key: 'regIberia',  value: 0.611, lo: 0.530, hi: 0.685 },
+  { key: 'regGermany', value: 0.575, lo: 0.528, hi: 0.628 },
+  { key: 'regOther',   value: 0.523, lo: 0.493, hi: 0.558 },
 ];
 
 /**
@@ -201,28 +208,28 @@ export default function Landing() {
               caption={t('scoreCaption')}
               columns={{ label: t('colRanker'), value: t('colScore'), interval: t('colCi') }}
               rows={SCORES.map(r => ({ ...r, label: t(r.key) }))}
-              domain={[0.42, 0.60]}
+              domain={[0.46, 0.70]}
               reference={0.5}
               referenceLabel={t('chance')}
-              ticks={[0.45, 0.5, 0.55, 0.6]}
+              ticks={[0.5, 0.6, 0.7]}
               locale={locale}
             />
             <p className="meta">{t('scoreMeta')}</p>
             <p className="reading">{t('scoreRead')}</p>
 
-            <h3 className="sub">{t('triedTitle')}</h3>
+            {/* Same scale as the table above, so the two read as one chart. */}
+            <h3 className="sub">{t('regionTitle')}</h3>
             <IntervalTable
-              caption={t('triedCaption')}
-              columns={{ label: t('colRanker'), value: t('colDelta'), interval: t('colCi') }}
-              rows={TRIED.map(r => ({ ...r, label: t(r.key) }))}
-              domain={[-0.06, 0.04]}
-              reference={0}
-              referenceLabel={t('noChange')}
-              ticks={[-0.05, 0, 0.03]}
+              caption={t('regionCaption')}
+              columns={{ label: t('colRegion'), value: t('colScore'), interval: t('colCi') }}
+              rows={REGIONS.map(r => ({ ...r, label: t(r.key) }))}
+              domain={[0.46, 0.70]}
+              reference={0.5}
+              referenceLabel={t('chance')}
+              ticks={[0.5, 0.6, 0.7]}
               locale={locale}
-              signed
             />
-            <p className="meta">{t('triedNote')}</p>
+            <p className="meta">{t('regionNote')}</p>
 
             <div className="notes three">
               <div>
