@@ -7,21 +7,32 @@
 // `lang` from the shared LanguageProvider, so a choice made here follows the
 // visitor into the map and back.
 //
-// Every number below is a measurement recorded in CLAUDE.md. When one of those
-// is re-measured, change it here too: this page is the only place a visitor
-// reads them.
+// The page is written for people evaluating the project (investors, partners)
+// as well as pilots. Confident, but every figure below is a measurement:
+//
+//   - Score tables: `python -m evaluation.evaluate --variant base --by-hour`,
+//     run 16 Nov 2026 on the training buffer of 6 Nov 2026 with the 862
+//     invented-weather rows removed (meteo_client.is_fallback_row), exactly as
+//     ThermalModel.load() removes them. The 0.542 / 11,774 comparison is the
+//     27 Sep 2026 table in CLAUDE.md.
+//   - Label thresholds, gate, buffer, cadence: models/thermal_model.py,
+//     data/ogn_client.py and config.py.
+//   - The 27% pseudo-absence figure and the 7.7 M reports a day: CLAUDE.md.
+//
+// When one of those is re-measured, change it here too: this page is the only
+// place a visitor reads them.
 
 import { DEFAULT_LANG } from '../i18n/strings.js';
 
 const STRINGS = {
   tr: {
-    docTitle:      'ThermalSense: planör pilotları için termal tahmini',
+    docTitle:      'ThermalSense: planörlerden öğrenen termal tahmini',
     skipToContent: 'İçeriğe geç',
 
     // nav
-    navSee:        'Haritada ne var',
+    navSee:        'Pilot için',
     navLearn:      'Nasıl öğrenir',
-    navScore:      'Ne kadar iyi',
+    navScore:      'Sonuçlar',
     navData:       'Veri',
     navLabel:      'Sayfa bölümleri',
     openMap:       'Canlı haritayı aç',
@@ -30,12 +41,12 @@ const STRINGS = {
     // hero
     heroUnseen:    'Termal görünmez.',
     heroSeen:      'Planörler yerini gösterir.',
-    heroLede:      'ThermalSense, haritada tıkladığınız noktanın çevresindeki '
-                 + 'yaklaşık 11 km’lik alanı 50 metrelik hücrelere böler ve her '
-                 + 'hücre için bir planörün orada tırmanış bulma olasılığını '
-                 + 'tahmin eder. Modeli planörlerin kendisi eğitir: dünyanın '
-                 + 'neresinde olursa olsun daire çizerek tırmanan her biri '
-                 + 'etiketli bir örnektir.',
+    heroLede:      'ThermalSense, Open Glider Network’teki canlı planör '
+                 + 'trafiğini eğitim verisine dönüştürür. Haritada bir noktaya '
+                 + 'tıkladığınızda çevresindeki yaklaşık 11 × 8 km’lik alanı 50 '
+                 + 'metrelik hücrelerle puanlar ve tırmanışın en olası olduğu '
+                 + 'yerleri gösterir. Model her beş dakikada bir kendini yeniden '
+                 + 'eğitir; her uçuş gününden, yaşandığı anda öğrenir.',
     heroSecondary: 'Nasıl öğrendiğine bakın',
 
     // hero simulation
@@ -44,7 +55,8 @@ const STRINGS = {
                  + 'hücreler ısınıyor',
     simCaption:    'Canlandırma, canlı veri değil. Göremediği bir termale giren '
                  + 'planör daire çizmeye başlar; altındaki hücreler de onun '
-                 + 'bıraktığı kanıtla ısınır.',
+                 + 'bıraktığı kanıtla ısınır. Modelin öğrenme biçimi tam olarak '
+                 + 'budur.',
     simReveal:     'Gizli termalleri göster',
     simHide:       'Termalleri gizle',
     simPause:      'Durdur',
@@ -56,50 +68,54 @@ const STRINGS = {
     high:          'yüksek',
 
     // live strip
-    liveNow:       'Şu an OGN ağında {n} aktif termal işaretli.',
-    liveNone:      'Şu an OGN ağında daire çizen planör kümesi yok. Gece ya da '
-                 + 'sakin bir saat olabilir.',
+    liveNow:       'ThermalSense şu anda dünya genelinde {n} aktif termali '
+                 + 'izliyor.',
+    liveNone:      'Şu an dünya genelinde aktif termal yok. Ana uçuş '
+                 + 'bölgelerinde gece ya da sakin bir saat olabilir.',
 
     // what you see
-    seeTitle:      'Haritada ne görürsünüz',
+    seeTitle:      'Pilot ne görür',
     seeCellsUnit:  'hücre',
-    seeCells:      'Tıkladığınız noktanın çevresi yaklaşık 50 m’lik 40.401 '
-                 + 'hücreye bölünür. Her hücre 22 girdiyle puanlanır: arazi, '
-                 + 'hava durumu ve sorduğunuz irtifa.',
+    seeCells:      'Tıkladığınız noktanın çevresindeki yaklaşık 11 × 8 km’lik '
+                 + 'alan, 50 metrelik 40.401 hücreye bölünür. Her hücre 22 '
+                 + 'girdiyle puanlanır: arazi, hava durumu, günün saati ve '
+                 + 'mevsim, bir de yerden yükseklik.',
     seePassesUnit: 'geçiş',
-    seePasses:     'Her tahmin, hava verisi hafifçe oynatılarak 50 kez '
-                 + 'yinelenir. Harita ortalamayı çizer; yayılım, API yanıtında '
-                 + 'belirsizlik olarak döner.',
+    seePasses:     'Her tahmin, hava verisi hafifçe değiştirilerek 50 kez '
+                 + 'çalıştırılır. Böylece her hücre, olasılığın yanında bir '
+                 + 'belirsizlik tahmini de taşır.',
     seeAheadFig:   '+23 sa',
     seeAheadUnit:  'ileri tahmin',
-    seeAhead:      'Sürgüyü kaydırın; aynı alan Open-Meteo tahminiyle 23 saat '
-                 + 'ileriye kadar yeniden hesaplanır: ilk üç saat 15 dakikada '
-                 + 'bir (saatlik değerler arasında enterpolasyonla), sonrası '
-                 + 'saat saat.',
+    seeAhead:      'Aynı alan, Open-Meteo tahmin verisiyle 23 saat sonrasına '
+                 + 'kadar yeniden puanlanabilir: ilk üç saat 15 dakikada bir, '
+                 + 'sonrası saat başı. Çeyrek saatler, saatlik değerlerin '
+                 + 'arasından enterpolasyonla bulunur.',
     seeLiveFig:    '1 sn',
     seeLiveUnit:   'canlı trafik',
-    seeLive:       'Planörler haritaya saniyede bir akar. Daire çizenler sarı '
-                 + 'görünür; aynı yerde kümelenen tırmanışlar aktif termal '
-                 + 'olarak işaretlenir.',
-    noteAltTitle:  'İrtifaya göre yanıt verir',
+    seeLive:       'Canlı trafik saniyede bir yenilenir. Daire çizerek '
+                 + 'tırmanan planörler öne çıkarılır ve bulundukları yer aktif '
+                 + 'termal olarak işaretlenir.',
+    noteAltTitle:  'Pilotun irtifası için yanıt verir',
     noteAlt:       'Bir planöre tıklarsanız tahmin onun irtifası için yapılır. '
                  + '900 m’de biten bir termal, 1.500 m’deki pilotun işine '
                  + 'yaramaz.',
-    noteNightTitle:'Güneş yoksa tahmin de yok',
-    noteNight:     'Yüzey ısınmıyorsa harita boş kalır ve nedenini söyler. '
-                 + 'Model o koşulda hiç eğitilmedi; tahmin uydurmak yerine '
-                 + 'tahmini olmadığını bildirir.',
+    noteNightTitle:'Dayanağı yoksa tahmin göstermez',
+    noteNight:     'Güneş zemini ısıtamayacak kadar alçaktaysa harita boş kalır '
+                 + 've nedenini söyler. Dayanağı olmayan bir tahmini asla '
+                 + 'göstermez.',
     noteRawTitle:  'Ham veriyi yanında gösterir',
-    noteRaw:       'Haritayı ikiye bölen ayırıcının solunda gelen veri, sağında '
-                 + 'ondan kurulan durur.',
+    noteRaw:       'Haritayı ikiye bölen ayırıcının bir yanında ham girdiler, '
+                 + 'öbür yanında bitmiş tahmin durur. Modelin tam olarak neyle '
+                 + 'çalıştığı bir bakışta görülür.',
     noteRawLink:   'Karşılaştırmayı aç',
 
     // how it learns
-    learnTitle:    'Model nasıl öğrenir',
-    learnIntro:    'Bir planör uçuşunun barogramı testere dişine benzer: '
-                 + 'termalde dönerek tırmanır, sonra düz süzülerek irtifa '
-                 + 'harcar. ThermalSense bu izin yalnızca iki ucunu etiket '
-                 + 'sayar, ortasını atar.',
+    learnTitle:    'Kendi kendini eğiten bir model',
+    learnIntro:    'Bir planörün barogramı testere dişine benzer: termalde '
+                 + 'dönerek tırmanır, sonra süzülerek irtifa kaybeder. '
+                 + 'ThermalSense bu izin iki net ucunu etiket olarak kullanır: '
+                 + 'dönerek tırmanış termalin varlığı, alçalan havada düz '
+                 + 'süzülüş yokluğudur. Belirsiz kalan her şey dışarıda bırakılır.',
     baroAlt:       'Şematik barogram: zamana karşı irtifa. Dönerek tırmanılan '
                  + 'bölümler pozitif, düz alçalınan bölümler negatif, aradaki '
                  + 'belirsiz bölüm ile 200 m altı ve termal tabanının 300 m '
@@ -115,109 +131,120 @@ const STRINGS = {
     labelPosRule:  'Daire çiziyor ve 1,5 m/s’den hızlı tırmanıyor.',
     labelNeg:      'Negatif',
     labelNegRule:  'Düz uçuyor ve 0,5 m/s’den hızlı alçalıyor.',
-    labelDrop:     'Atılır',
+    labelDrop:     'Kullanılmaz',
     labelDropRule: 'İkisinin arası; ayrıca 200 m AGL altı ve termal tabanının '
                  + '300 m üstü.',
-    whyDropTitle:  'Ortası neden atılıyor?',
-    whyDrop:       'Dönmeden kaldırıcı havanın içinden geçen ya da yamaç '
-                 + 'boyunca uçan planör de “termal dönmüyor” görünür. Onu '
-                 + '“burada termal yok” diye etiketlemek, modele termalin tam '
-                 + 'olduğu yerde olmadığını öğretir. Canlı akışın 24 '
-                 + 'dakikasında, eski kuralın negatif saydığı 55.856 satırın '
-                 + 'yalnızca 14.940’ı (%27) gerçek yokluktu.',
+    whyDropTitle:  'Belirsiz orta kısım neden dışarıda',
+    whyDrop:       'Termalin içinden ya da bir yamaç boyunca düz uçan planör '
+                 + 'dönmüyordur, ama alçalan havada da değildir. Onu “termal '
+                 + 'yok” diye saymak, modele termalin tam olduğu yerde '
+                 + 'olmadığını öğretirdi. Canlı akışın 24 dakikasında, daha '
+                 + 'basit bir kuralın “termal yok” diyeceği 55.856 satırın '
+                 + 'yalnızca 14.940’ı (%27) gerçekten alçalan havadaydı. Aynı '
+                 + 'veriden çok daha temiz etiketler.',
     stepsTitle:    'Bildirimden haritaya',
     stepFeed:      'Akış',
     stepFeedText:  'Open Glider Network’ün dünya çapındaki APRS akışı '
                  + 'kesintisiz dinlenir: günde yaklaşık 7,7 milyon konum '
                  + 'bildirimi.',
     stepGate:      'Eleme',
-    stepGateText:  'Her bildirim önce akla yatkınlık kapısından geçer. '
+    stepGateText:  'Her bildirim önce akla yatkınlık kontrolünden geçer. '
                  + '15.000 m üstü irtifa, 400 km/sa üstü hız ve hiçbir uçağın '
-                 + 'uçamayacağı sıçramalar atılır; üç kez yakalanan kimlik 30 '
+                 + 'yapamayacağı sıçramalar elenir; üç kez yakalanan kimlik 30 '
                  + 'dakika karantinaya alınır.',
     stepLabel:     'Etiket',
     stepLabelText: 'Kalan bildirimler yukarıdaki kuralla etiketlenir. Güneş '
-                 + 'ışınımı 50 W/m² altındaysa, yani yüzey ısınmıyorsa örnek '
+                 + 'ışınımı 50 W/m² altındaysa, yani zemin ısınmıyorsa örnek '
                  + 'alınmaz.',
     stepFit:       'Eğitim',
-    stepFitText:   'Her beş dakikada bir XGBoost modeli, en çok 200.000 '
-                 + 'satırlık bir örnek havuzundan sıfırdan eğitilir. Havuz '
-                 + 'dolunca her güne eşit yer ayrılır; model tek bir hava '
-                 + 'dönemini ezberlemesin diye.',
+    stepFitText:   'Her beş dakikada bir XGBoost modeli, en fazla 200.000 '
+                 + 'örneklik bir havuzdan sıfırdan eğitilir; her gece de önceki '
+                 + 'günün uçuş arşivi taranarak havuza yeni örnekler eklenir. '
+                 + 'Havuz dolunca her güne eşit pay ayrılır, böylece model tek '
+                 + 'bir hava dönemine bağlı kalmaz.',
     stepQuality:   'Kalite kapısı',
-    stepQualityText: 'Yeni model, yayındakiyle aynı dondurulmuş sınav '
-                 + 'verisinde karşılaştırılır. Farkın %95 güven aralığı '
-                 + 'tümüyle sıfırın üstünde değilse yayına alınmaz. Üst üste '
-                 + '12 retten sonra kapı yeni modeli referans alır; şanslı '
-                 + 'tek bir skor modeli sonsuza dek donduramasın diye.',
+    stepQualityText: 'Yeni model, yayındaki modeli aynı sabit sınav verisinde '
+                 + 'geçmedikçe yayına alınmaz: farkın %95 güven aralığı '
+                 + 'tümüyle sıfırın üstünde olmalıdır. Üst üste 12 retten sonra '
+                 + 'kapı referansını yeniler; böylece tek bir şanslı skor modeli '
+                 + 'yerinde donduramaz.',
 
-    // how good
-    scoreTitle:    'Ne kadar iyi',
-    scoreLead:     'Şanstan biraz iyi. Daha fazlası değil.',
-    scoreIntro:    'Aşağıdaki skorlar, tek bir ısı haritasının kapsadığı '
-                 + 'birimin içinde ölçüldü: aynı gün, aynı bölge, aynı saat. '
-                 + 'Modelin, planörün tırmandığı bir hücreyi tırmanmadığı bir '
-                 + 'hücrenin üstüne ne sıklıkla koyduğunu söyler. 0,50 yazı '
-                 + 'tura demektir.',
-    colRanker:     'Sıralayıcı',
+    // results
+    scoreTitle:    'İddia değil, ölçüm',
+    scoreLead:     'Şansın açıkça üstünde ve tek bir sinyalden daha güçlü.',
+    scoreIntro:    'Modeli en katı biçimde sınıyoruz: yalnızca aynı alanda ve '
+                 + 'aynı saatte, havanın birebir aynı olduğu hücrelere karşı. '
+                 + 'Böylece skor, günün iyi olup olmadığını değil, termalin '
+                 + 'nerede olduğunu ölçer. Skor, modelin bir planörün tırmandığı '
+                 + 'noktayı bir planörün alçaldığı noktanın üstüne koyma '
+                 + 'olasılığıdır; 0,50 hiçbir ayırt etme gücü olmadığı anlamına '
+                 + 'gelir.',
+    colRanker:     'Yöntem',
+    colRegion:     'Bölge',
     colScore:      'Skor',
     colCi:         '%95 güven aralığı',
-    colDelta:      'Fark',
     chance:        'şans',
-    noChange:      'fark yok',
     rowAlt:        'Yalnızca yerden yükseklik',
-    rowTerrain:    'Yalnızca arazi çarpanı',
-    rowSun:        'Yalnızca güneş geliş açısı',
-    rowModel:      'Yayındaki model, 22 sütun',
-    scoreCaption:  'Sıralayıcıların grup içi skoru ve %95 güven aralığı',
-    scoreMeta:     '27 Eylül 2026 ölçümü: 11.774 satır, 1.714 pozitif, 2.571 '
-                 + 'puanlama birimi. Aralıklar bootstrap ile hesaplandı.',
-    scoreRead:     'Okuması şu: bir grubun içinde değişen altı girdi konum, '
-                 + 'konumdan türeyen arazi ve uçağın yüksekliğidir. Hiçbiri bu '
-                 + 'toprağın şu an sıcak olup olmadığını ölçmez. Arazi ile '
-                 + 'irtifanın götürebildiği yer yaklaşık 0,55.',
-    triedTitle:    'Denendi, kanıtlanamadı',
-    triedCaption:  'Denenen dört değişikliğin yayındaki kuruluma göre farkı ve '
-                 + '%95 güven aralığı',
-    triedSun:      'Güneş geliş açısı, 23. sütun olarak',
-    triedRank:     'Çiftler üzerinden sıralama hedefi',
-    triedSix:      'Yalnızca grup içinde değişen altı sütun',
-    triedPrior:    'Hücrenin kendi geçmiş tırmanma kaydı',
-    triedNote:     'Dört aralık da sıfırı içeriyor; hiçbiri sonuç vermedi. '
-                 + 'Sonuncusu anlamlılığa en yakın aday.',
-    nextTitle:     'Denenmemiş kaldıraç',
-    nextText:      'Her hücre için toprağın o an ne kadar sıcak olduğunu ölçen '
-                 + 'bir girdi: uydudan yer yüzeyi sıcaklığı ya da gün '
-                 + 'doğumundan beri biriken güneşlenme.',
-    useTitle:      'Peki harita ne işe yarar?',
-    useText:       'Canlı trafik ve daire çizen planör kümeleri tahmin değil, '
-                 + 'gözlemdir. Isı haritası ise bir model tahminidir: nereye '
-                 + 'bakacağınıza dair bir ipucu olarak okuyun, vaat olarak '
-                 + 'değil.',
-    turkiyeTitle:  'Türkiye için not',
-    turkiyeText:   'OGN akışında Türkiye trafiği çok seyrek; model ağırlıklı '
-                 + 'olarak başka bölgelerdeki uçuşlardan öğreniyor. Güncel '
-                 + 'dağılım eğitim durumu panelinde.',
+    rowPhysics:    'Fizik temelli kural (öğrenmesiz)',
+    rowTerrain:    'Yalnızca arazi şekli',
+    rowSun:        'Yalnızca yamaca düşen güneş açısı',
+    rowModel:      'ThermalSense modeli',
+    scoreCaption:  'Yöntemlerin aynı saat içindeki skoru ve %95 güven aralığı',
+    scoreMeta:     '16 Kasım 2026’da, 6 Kasım itibarıyla eğitim verisi '
+                 + 'üzerinde ölçüldü: 47.419 örnek, 6.259 tırmanış. Gruplanmış '
+                 + 'beş katlı çapraz doğrulama, %95 bootstrap güven aralıkları.',
+    scoreRead:     '27 Eylül’de, verinin dörtte biriyle (11.774 örnek) aynı '
+                 + 'test 0,542 vermişti. Model her beş dakikada bir yeni '
+                 + 'trafikle yeniden eğitiliyor ve her uçuş günü, öğrenebileceği '
+                 + 'veriyi büyütüyor.',
+    regionTitle:   'Bölgelere göre',
+    regionCaption: 'ThermalSense modelinin bölgelere göre skoru ve %95 güven '
+                 + 'aralığı',
+    regAlps:       'Alpler',
+    regIberia:     'İberya',
+    regGermany:    'Almanya',
+    regOther:      'Dünyanın geri kalanı',
+    regionNote:    'Alpler, İberya ve dünyanın geri kalanında model, yalnızca '
+                 + 'arazi şekline dayalı sıralamayı tümüyle sıfırın üstünde '
+                 + 'kalan güven aralıklarıyla geçiyor. Almanya’da fark henüz '
+                 + 'istatistiksel olarak net değil.',
+    nextTitle:     'Yol haritasında sıradaki',
+    nextText:      'Her hücre için zeminin şu an ne kadar sıcak olduğunu ölçen '
+                 + 'bir girdi (uydudan yer yüzeyi sıcaklığı ya da gün '
+                 + 'doğumundan beri biriken güneşlenme) ve her hücrenin uçuş '
+                 + 'arşivinden çıkarılan kendi tırmanış geçmişi. İkincisi şu '
+                 + 'anda test aşamasında.',
+    useTitle:      'Gözlem ve tahmin bir arada',
+    useText:       'Canlı trafik ve aktif termaller, planörlerin şu an '
+                 + 'bildirdiğidir. Isı haritası ise modelin geri kalan her yer '
+                 + 'için tahminidir; henüz kimsenin uçmadığı yerler de dahil.',
+    turkiyeTitle:  'Türkiye',
+    turkiyeText:   'ThermalSense önce Türk pilotları için yapıldı, ancak OGN '
+                 + 'akışında Türkiye trafiği henüz seyrek: 47.419 eğitim '
+                 + 'örneğinin 55’i. Bu sayı büyüyene kadar Türkiye’deki '
+                 + 'tahminler, modelin Alpler’de ve başka bölgelerde '
+                 + 'öğrendiklerine dayanıyor.',
     turkiyeLink:   'Eğitim durumunu aç',
 
     // data
-    dataTitle:     'Hangi veriyle çalışır',
+    dataTitle:     'Açık veri üzerine kurulu',
     dataCaption:   'Veri kaynakları ve kullanım amaçları',
     colSource:     'Kaynak',
     colUse:        'Ne için',
     srcOgnUse:     'Canlı konumlar ve eğitim etiketleri',
-    srcMeteoUse:   'Sıcaklık, nem, rüzgâr, CAPE ve CIN, güneş ışınımı, sınır '
-                 + 'tabaka yüksekliği',
+    srcMeteoUse:   'Yerde ve yükseklerde sıcaklık, nem, rüzgâr, CAPE ve CIN, '
+                 + 'güneş ışınımı, sınır tabaka yüksekliği, toprak sıcaklığı',
     srcDemUse:     'Yükseklik, eğim ve bakı',
-    machineTitle:  'Küçük bir sunucuda',
-    machineText:   'Tamamı tek bir süreçte, 2 sanal çekirdekli ve 896 MB '
-                 + 'bellekli bir sunucuda çalışır. Sıcak önbellekle bir tahmin '
-                 + 'yaklaşık yarım saniye sürer.',
+    machineTitle:  'Hafif altyapı',
+    machineText:   'Tüm sistem tek bir küçük bulut sunucusunda, tek bir servis '
+                 + 'olarak çalışır. Önbellek sıcakken bir tahmin yaklaşık yarım '
+                 + 'saniye sürer.',
 
     // closing
     closeTitle:    'Bugün nerede tırmanılıyor?',
-    disclaimer:    'ThermalSense deneysel bir projedir. Uçuş kararlarınızı '
-                 + 'yalnızca buna dayandırmayın.',
+    disclaimer:    'ThermalSense pilotun kararını destekler; pilotun '
+                 + 'muhakemesinin ya da resmî meteoroloji brifinginin yerini '
+                 + 'tutmaz.',
     creditTerrain: 'Arazi: Copernicus DEM © DLR e.V. 2010–2014, © Airbus '
                  + 'Defence and Space GmbH 2014–2018; COPERNICUS kapsamında AB '
                  + 've ESA tarafından sağlanmıştır.',
@@ -226,12 +253,12 @@ const STRINGS = {
   },
 
   en: {
-    docTitle:      'ThermalSense: thermal prediction for glider pilots',
+    docTitle:      'ThermalSense: thermal forecasting that learns from gliders',
     skipToContent: 'Skip to content',
 
-    navSee:        'On the map',
+    navSee:        'For pilots',
     navLearn:      'How it learns',
-    navScore:      'How good it is',
+    navScore:      'Results',
     navData:       'Data',
     navLabel:      'Page sections',
     openMap:       'Open the live map',
@@ -239,18 +266,20 @@ const STRINGS = {
 
     heroUnseen:    'Thermals are invisible.',
     heroSeen:      'Gliders give them away.',
-    heroLede:      'ThermalSense cuts the roughly 11 km around any point you '
-                 + 'click into 50 m cells and estimates, for each one, the '
-                 + 'chance that a glider finds a climb there. The gliders '
-                 + 'train the model themselves: every one that circles and '
-                 + 'climbs, anywhere in the world, is a labelled example.',
+    heroLede:      'ThermalSense turns live glider traffic on the Open Glider '
+                 + 'Network into training data. Click any point and it scores '
+                 + 'the surrounding area of about 11 × 8 km in 50 m cells, '
+                 + 'showing where a climb is most likely. The model retrains '
+                 + 'itself every five minutes, learning from every soaring day '
+                 + 'as it happens.',
     heroSecondary: 'See how it learns',
 
     simAlt:        'Animation: gliders cruising and circling over a dark map '
                  + 'grid; cells warm up where they circle',
     simCaption:    'An illustration, not live data. A glider that flies into a '
                  + 'thermal it cannot see starts to circle, and the cells '
-                 + 'beneath it warm with the evidence it leaves.',
+                 + 'beneath it warm with the evidence it leaves. That is '
+                 + 'exactly how the model learns.',
     simReveal:     'Show the hidden thermals',
     simHide:       'Hide the thermals',
     simPause:      'Pause',
@@ -261,54 +290,57 @@ const STRINGS = {
     low:           'low',
     high:          'high',
 
-    liveNow:       ({ n }) => `${n} active thermal${n === 1 ? ' is' : 's are'} `
-                            + 'marked on the OGN network right now.',
-    liveNone:      'No clusters of circling gliders on the OGN network right '
-                 + 'now. It may be night, or a quiet hour.',
+    liveNow:       ({ n }) => `ThermalSense is tracking ${n} active `
+                            + `thermal${n === 1 ? '' : 's'} worldwide right now.`,
+    liveNone:      'No active thermals worldwide right now. It may be night, '
+                 + 'or a quiet hour, over the main soaring regions.',
 
-    seeTitle:      'What you see on the map',
+    seeTitle:      'What a pilot sees',
     seeCellsUnit:  'cells',
-    seeCells:      'The ground around your click is cut into 40,401 cells of '
-                 + 'about 50 m. Each is scored from 22 inputs: terrain, '
-                 + 'weather and the altitude you asked about.',
+    seeCells:      'Around any point you click, about 11 × 8 km of ground is '
+                 + 'split into 40,401 cells of about 50 m. Each is scored from '
+                 + '22 inputs: terrain, weather, time of day and season, and '
+                 + 'height above the ground.',
     seePassesUnit: 'passes',
-    seePasses:     'Each prediction is repeated 50 times over slightly '
-                 + 'perturbed weather. The map draws the mean; the spread '
-                 + 'comes back in the API response as the uncertainty.',
+    seePasses:     'Every prediction runs 50 times over slightly varied '
+                 + 'weather, so each cell carries an uncertainty estimate as '
+                 + 'well as a probability.',
     seeAheadFig:   '+23 h',
     seeAheadUnit:  'forecast',
-    seeAhead:      'Drag the slider and the same patch is scored again, up to '
-                 + '23 hours ahead, on Open-Meteo forecast fields: every 15 '
-                 + 'minutes for the first three hours (interpolated between '
-                 + 'the hourly values), then hour by hour.',
+    seeAhead:      'The same area can be scored up to 23 hours ahead on '
+                 + 'Open-Meteo forecast data: every 15 minutes for the first '
+                 + 'three hours, then hourly. The quarter hours are '
+                 + 'interpolated between the hourly values.',
     seeLiveFig:    '1 s',
     seeLiveUnit:   'live traffic',
-    seeLive:       'Gliders stream onto the map every second. Circling ones '
-                 + 'turn gold; climbs that cluster in one place are marked as '
-                 + 'an active thermal.',
-    noteAltTitle:  'It answers for an altitude',
+    seeLive:       'Live traffic refreshes every second. Gliders circling in a '
+                 + 'climb are highlighted, and where they are the map marks an '
+                 + 'active thermal.',
+    noteAltTitle:  'It answers for the pilot’s altitude',
     noteAlt:       'Click a glider and the prediction is made for that '
                  + 'glider’s height. A thermal that tops out at 900 m is no '
                  + 'use to a pilot at 1,500 m.',
-    noteNightTitle:'No sun, no forecast',
-    noteNight:     'When nothing is heating the ground the map stays empty '
-                 + 'and says why. The model was never trained in that regime, '
-                 + 'so it reports having no forecast instead of inventing one.',
+    noteNightTitle:'No basis, no forecast',
+    noteNight:     'When the sun is too low to heat the ground, the map stays '
+                 + 'empty and says why. It never shows a forecast it has no '
+                 + 'basis for.',
     noteRawTitle:  'It shows the raw data beside it',
-    noteRaw:       'A divider splits the map: the data as it arrives on the '
-                 + 'left, what is built from it on the right.',
+    noteRaw:       'A divider splits the map: raw inputs on one side, the '
+                 + 'finished prediction on the other. What the model works '
+                 + 'from is visible at a glance.',
     noteRawLink:   'Open the comparison',
 
-    learnTitle:    'How the model learns',
-    learnIntro:    'The barogram of a glider flight is a sawtooth: it circles '
-                 + 'up in a thermal, then spends the height gliding straight. '
-                 + 'ThermalSense takes only the two ends of that trace as '
-                 + 'labels and throws the middle away.',
+    learnTitle:    'A model that trains itself',
+    learnIntro:    'A glider’s barogram is a sawtooth: it circles up in a '
+                 + 'thermal, then glides on, losing height. ThermalSense uses '
+                 + 'the two clear ends of that trace as labels: climbing in a '
+                 + 'turn is lift, gliding straight through sinking air is its '
+                 + 'absence. Everything ambiguous is left out.',
     baroAlt:       'Schematic barogram: altitude against time. Circling '
                  + 'climbs are marked positive, straight sinking glides '
                  + 'negative, and the ambiguous stretch between, everything '
                  + 'below 200 m and everything more than 300 m above the '
-                 + 'thermal base are marked discarded.',
+                 + 'thermal base are marked not used.',
     baroAxisAlt:   'altitude',
     baroAxisTime:  'time',
     baroCeil:      'thermal base + 300 m',
@@ -320,107 +352,118 @@ const STRINGS = {
     labelPosRule:  'Circling and climbing faster than 1.5 m/s.',
     labelNeg:      'Negative',
     labelNegRule:  'Flying straight and sinking faster than 0.5 m/s.',
-    labelDrop:     'Discarded',
+    labelDrop:     'Not used',
     labelDropRule: 'Everything between; also anything below 200 m AGL or more '
                  + 'than 300 m above the thermal base.',
-    whyDropTitle:  'Why throw the middle away?',
-    whyDrop:       'A glider dolphining through lift without turning, or '
-                 + 'running a ridge, also looks like it is “not thermalling”. '
-                 + 'Labelling it “no lift here” teaches the model that lift is '
-                 + 'absent exactly where it is present. Over 24 minutes of '
-                 + 'live feed, only 14,940 of the 55,856 rows the old rule '
-                 + 'called negative (27%) were true absences.',
+    whyDropTitle:  'Why the ambiguous middle is left out',
+    whyDrop:       'A glider flying straight through lift, or along a ridge, '
+                 + 'is not circling, but it is not in sinking air either. '
+                 + 'Counting it as “no lift” would teach the model that lift is '
+                 + 'missing exactly where it is. On 24 minutes of live feed, '
+                 + 'only 14,940 of the 55,856 rows (27%) a simpler rule would '
+                 + 'have called “no lift” were truly in sinking air. Far cleaner '
+                 + 'labels, from the same data.',
     stepsTitle:    'From a position report to the map',
     stepFeed:      'Feed',
     stepFeedText:  'The worldwide Open Glider Network APRS feed is read '
                  + 'continuously: about 7.7 million position reports a day.',
     stepGate:      'Screening',
-    stepGateText:  'Every report passes a plausibility gate first. Altitudes '
+    stepGateText:  'Every report passes a plausibility check first. Altitudes '
                  + 'above 15,000 m, speeds above 400 km/h and jumps no '
-                 + 'aircraft could fly are dropped; an id caught three times '
-                 + 'is quarantined for 30 minutes.',
+                 + 'aircraft could fly are filtered out; an id caught three '
+                 + 'times is quarantined for 30 minutes.',
     stepLabel:     'Label',
     stepLabelText: 'What remains is labelled by the rule above. No sample is '
                  + 'taken when solar radiation is under 50 W/m², because '
                  + 'nothing is heating the ground.',
     stepFit:       'Training',
-    stepFitText:   'Every five minutes an XGBoost model is refitted from '
-                 + 'scratch on a pool of at most 200,000 rows. Once the pool '
-                 + 'is full each day keeps an equal share, so the model does '
-                 + 'not memorise one stretch of weather.',
+    stepFitText:   'Every five minutes an XGBoost model is retrained from '
+                 + 'scratch on a pool of up to 200,000 examples, and every '
+                 + 'night the previous day’s flight archive is mined for more. '
+                 + 'Once the pool is full each day keeps an equal share, so the '
+                 + 'model is never tied to one stretch of weather.',
     stepQuality:   'Quality gate',
-    stepQualityText: 'The new model is scored against the serving one on the '
-                 + 'same frozen benchmark. Unless the 95% confidence interval '
-                 + 'of the difference lies entirely above zero, it is not '
-                 + 'promoted. After 12 rejections in a row the gate takes the '
-                 + 'new model as its baseline, so one lucky score cannot '
-                 + 'freeze the model for good.',
+    stepQualityText: 'A new model goes live only if it beats the current one '
+                 + 'on the same frozen benchmark, with a 95% confidence '
+                 + 'interval entirely above zero. After 12 rejections in a row '
+                 + 'the gate resets its baseline, so one lucky score cannot '
+                 + 'freeze the model in place.',
 
-    scoreTitle:    'How good it is',
-    scoreLead:     'A little better than chance. Not more than that.',
-    scoreIntro:    'The scores below are measured inside the unit one heatmap '
-                 + 'covers: same day, same area, same hour. They say how '
-                 + 'often the model ranks a cell where a glider climbed above '
-                 + 'one where it did not. 0.50 is a coin toss.',
-    colRanker:     'Ranker',
+    scoreTitle:    'Measured, not claimed',
+    scoreLead:     'Clearly above chance, and stronger than any single signal '
+                 + 'alone.',
+    scoreIntro:    'We test the model the strict way: only against other cells '
+                 + 'in the same area and the same hour, where the weather is '
+                 + 'identical. The score therefore reflects where the lift is, '
+                 + 'not whether it was a good soaring day. It is the chance '
+                 + 'that the model ranks a spot where a glider climbed above '
+                 + 'one where a glider sank; 0.50 means no ability to tell '
+                 + 'them apart.',
+    colRanker:     'Method',
+    colRegion:     'Region',
     colScore:      'Score',
     colCi:         '95% confidence interval',
-    colDelta:      'Change',
     chance:        'chance',
-    noChange:      'no change',
     rowAlt:        'Height above ground alone',
-    rowTerrain:    'Terrain multiplier alone',
-    rowSun:        'Sun incidence angle alone',
-    rowModel:      'Served model, 22 columns',
-    scoreCaption:  'Within-group score and 95% confidence interval per ranker',
-    scoreMeta:     'Measured 27 September 2026 on 11,774 rows, 1,714 positives '
-                 + 'and 2,571 scoring units. Intervals are bootstrap '
-                 + 'confidence intervals.',
-    scoreRead:     'The reading: the six inputs that vary inside a group are '
-                 + 'position, the terrain derived from it, and the aircraft’s '
-                 + 'height. None of them measures whether this ground is hot '
-                 + 'right now. About 0.55 is where terrain and altitude run '
-                 + 'out.',
-    triedTitle:    'Tried, not proven',
-    triedCaption:  'Change against the shipped setup, with 95% confidence '
-                 + 'interval, for the four changes tried',
-    triedSun:      'Sun incidence as a 23rd column',
-    triedRank:     'A pairwise ranking objective',
-    triedSix:      'Only the six columns that vary inside a group',
-    triedPrior:    'Each cell’s own past climb record',
-    triedNote:     'All four intervals include zero, so none is conclusive. '
-                 + 'The last is the closest to significance.',
-    nextTitle:     'The untried lever',
-    nextText:      'A per-cell input that measures how hot the ground is '
-                 + 'right now: land surface temperature from satellite, or '
-                 + 'sunshine accumulated since sunrise.',
-    useTitle:      'So what is the map good for?',
-    useText:       'The live traffic and the clusters of circling gliders are '
-                 + 'observations, not predictions. The heatmap is a model '
-                 + 'estimate: read it as a hint about where to look, not as a '
-                 + 'promise.',
-    turkiyeTitle:  'A note for Türkiye',
-    turkiyeText:   'Türkiye traffic on the OGN feed is very sparse, so the '
-                 + 'model learns mostly from flights elsewhere. The training '
-                 + 'status panel shows the current split.',
+    rowPhysics:    'Physics-based rule (no learning)',
+    rowTerrain:    'Terrain shape alone',
+    rowSun:        'Sun angle on the slope alone',
+    rowModel:      'ThermalSense model',
+    scoreCaption:  'Score within the same hour and 95% confidence interval for '
+                 + 'each method',
+    scoreMeta:     'Measured 16 November 2026 on the training data as of '
+                 + '6 November: 47,419 examples, 6,259 climbs. Grouped '
+                 + 'five-fold cross-validation, 95% bootstrap intervals.',
+    scoreRead:     'On 27 September, with a quarter of the data (11,774 '
+                 + 'examples), the same test gave 0.542. The model is retrained '
+                 + 'on fresh traffic every five minutes, and every soaring day '
+                 + 'adds to what it can learn from.',
+    regionTitle:   'By region',
+    regionCaption: 'ThermalSense model score by region, with 95% confidence '
+                 + 'interval',
+    regAlps:       'Alps',
+    regIberia:     'Iberia',
+    regGermany:    'Germany',
+    regOther:      'Rest of the world',
+    regionNote:    'In the Alps, Iberia and the rest of the world the model '
+                 + 'beats a ranking by terrain shape alone, with confidence '
+                 + 'intervals entirely above zero. In Germany the margin is not '
+                 + 'yet statistically clear.',
+    nextTitle:     'Next on the roadmap',
+    nextText:      'A per-cell input that measures how hot the ground is right '
+                 + 'now (satellite land surface temperature, or sunshine '
+                 + 'accumulated since sunrise), and each cell’s own climb '
+                 + 'history mined from the flight archive. The second is '
+                 + 'already in testing.',
+    useTitle:      'Observation and prediction, side by side',
+    useText:       'Live traffic and active thermals are what gliders are '
+                 + 'reporting right now. The heatmap is the model’s estimate '
+                 + 'for everywhere else, including where nobody is flying yet.',
+    turkiyeTitle:  'Türkiye',
+    turkiyeText:   'ThermalSense is built for Turkish pilots first, but Turkish '
+                 + 'traffic on the OGN feed is still sparse: 55 of the 47,419 '
+                 + 'training examples. Until that grows, predictions in Türkiye '
+                 + 'draw on what the model has learned in the Alps and '
+                 + 'elsewhere.',
     turkiyeLink:   'Open training status',
 
-    dataTitle:     'What it runs on',
+    dataTitle:     'Built on open data',
     dataCaption:   'Data sources and what each is used for',
     colSource:     'Source',
     colUse:        'Used for',
     srcOgnUse:     'Live positions and training labels',
-    srcMeteoUse:   'Temperature, humidity, wind, CAPE and CIN, solar '
-                 + 'radiation, boundary-layer height',
+    srcMeteoUse:   'Temperature at the surface and aloft, humidity, wind, CAPE '
+                 + 'and CIN, solar radiation, boundary-layer height, soil '
+                 + 'temperature',
     srcDemUse:     'Elevation, slope and aspect',
-    machineTitle:  'On a small server',
-    machineText:   'All of it runs in one process on a server with 2 virtual '
-                 + 'cores and 896 MB of memory. On a warm cache a prediction '
-                 + 'takes about half a second.',
+    machineTitle:  'Lean to run',
+    machineText:   'The whole system runs as one service on a single small '
+                 + 'cloud server. On a warm cache a prediction takes about half '
+                 + 'a second.',
 
     closeTitle:    'Where are they climbing today?',
-    disclaimer:    'ThermalSense is an experimental project. Do not base '
-                 + 'flight decisions on it alone.',
+    disclaimer:    'ThermalSense supports a pilot’s judgement. It does not '
+                 + 'replace it, or an official weather briefing.',
     creditTerrain: 'Terrain: Copernicus DEM © DLR e.V. 2010–2014, © Airbus '
                  + 'Defence and Space GmbH 2014–2018, provided under '
                  + 'COPERNICUS by the EU and ESA.',
