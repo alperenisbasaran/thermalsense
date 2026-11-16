@@ -316,7 +316,7 @@ Breaking any of these has taken the app down or silently corrupted results befor
 
 | Endpoint | Notes |
 |---|---|
-| `GET /predict?lat=&lon=&alt=&forecast_h=` | Heatmap, std and weather. `alt` is observer AMSL; omitting it means terrain mean + 1000 m. `inputs` carries what the grid was built from — the fetched elevation samples and the feature width — for the comparison view |
+| `GET /predict?lat=&lon=&alt=&forecast_h=` | Heatmap, std and weather. `alt` is observer AMSL; omitting it means terrain mean + 1000 m. `forecast_h` is hours ahead, 0–24, rounded to the quarter hour (the slider steps every 15 min to +3 h, then hourly to +23 h); a fractional offset interpolates between the two hourly Open-Meteo values either side, and 0 still reads the current hour exactly as the live sampler does. `inputs` carries what the grid was built from — the fetched elevation samples and the feature width — for the comparison view |
 | `GET /ogn/live?wait_agl=` | Live snapshot. AGL from the warm cache unless `wait_agl=true` |
 | `GET /ogn/search?q=&limit=` | Server-side id search — the client no longer holds a full glider list |
 | `GET /ogn/track/{id}` | Last 8 h of positions (runs in a thread; the table holds millions of rows) |

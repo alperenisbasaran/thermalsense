@@ -2,6 +2,7 @@ import { useState, useRef } from 'react';
 import { useLang } from '../i18n/LanguageContext.jsx';
 import { useTheme } from '../theme/ThemeContext.jsx';
 import { LANG_LABEL } from '../i18n/strings.js';
+import { FORECAST_STEPS } from '../config.js';
 
 export default function WeatherBar({ weather, forecastH = 0, onForecastChange, loading, error }) {
   const { t, lang, toggleLang, windDir } = useLang();
@@ -10,6 +11,7 @@ export default function WeatherBar({ weather, forecastH = 0, onForecastChange, l
   // The glyph shows the mode the click leads to, not the one in force —
   // a control labelled with its current state reads as a status light.
   const themeLabel = theme === 'dark' ? t('switchToLight') : t('switchToDark');
+  const forecastLabel = formatForecast(t, forecastH);
 
   return (
     <div className="top-bar">
@@ -61,15 +63,18 @@ export default function WeatherBar({ weather, forecastH = 0, onForecastChange, l
 
       <div className="forecast-ctrl">
         <span className="forecast-ctrl-label">{t('forecast')}</span>
+        {/* The range runs over indices into FORECAST_STEPS, not over hours: the
+            stops are 15 minutes apart for three hours and an hour apart after,
+            and a range input can only step evenly. */}
         <input
-          type="range" min={0} max={23} step={1}
-          value={forecastH}
-          onChange={e => onForecastChange(Number(e.target.value))}
+          type="range" min={0} max={FORECAST_STEPS.length - 1} step={1}
+          value={Math.max(0, FORECAST_STEPS.indexOf(forecastH))}
+          onChange={e => onForecastChange(FORECAST_STEPS[Number(e.target.value)])}
+          aria-label={t('forecast')}
+          aria-valuetext={forecastLabel}
           className="forecast-slider"
         />
-        <span className="forecast-ctrl-value">
-          {!forecastH ? t('now') : t('plusHours', { n: forecastH })}
-        </span>
+        <span className="forecast-ctrl-value">{forecastLabel}</span>
       </div>
 
       <button
@@ -91,6 +96,18 @@ export default function WeatherBar({ weather, forecastH = 0, onForecastChange, l
       </button>
     </div>
   );
+}
+
+// "+45 dk", "+1 sa 15 dk", "+6 sa". Minutes are spelled out rather than
+// abbreviated to "m", which on a map full of altitudes reads as metres.
+function formatForecast(t, hours) {
+  if (!hours) return t('now');
+  const total = Math.round(hours * 60);
+  const h = Math.floor(total / 60);
+  const m = total % 60;
+  if (!m) return t('plusHours', { n: h });
+  if (!h) return t('plusMinutes', { n: m });
+  return t('plusHoursMinutes', { h, m });
 }
 
 function WindValue({ speed, dir, label }) {

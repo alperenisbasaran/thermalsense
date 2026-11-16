@@ -1,5 +1,6 @@
 import json
 import logging
+import math
 from pathlib import Path
 
 import httpx
@@ -78,6 +79,51 @@ def _hour_index(times: list[str], forecast_h: int) -> int:
     return max(0, min(idx, len(times) - 1))
 
 
+def _hour_slots(times: list[str], forecast_h: float) -> tuple[int, int, float]:
+    """
+    The two hourly slots either side of (current hour + forecast_h), and how far
+    from the first to the second the offset falls (0 <= w < 1).
+
+    The forecast slider steps in quarter hours over the first three hours, and
+    Open-Meteo answers hourly.  Reading the slot the offset lands in would give
+    four identical weather inputs per hour and one jump at each boundary, so a
+    fractional offset is interpolated between the two hours instead — the same
+    thing Open-Meteo's own 15-minute product does outside the few regions that
+    have a native 15-minute model.
+
+    Anchored on the current hour exactly as _hour_index is, so a whole offset is
+    w = 0 and reads the slot it always read.  forecast_h = 0 in particular is
+    still the current hour's values: that is what the live sampler pairs its
+    labels with, and served features must stay the ones training saw.  It also
+    keeps the result constant within a clock hour, which is what the per-hour
+    live cache assumes.
+    """
+    whole = math.floor(forecast_h)
+    w     = forecast_h - whole
+    i0    = _hour_index(times, whole)
+    if w <= 0 or i0 >= len(times) - 1:
+        return i0, i0, 0.0
+    return i0, i0 + 1, w
+
+
+def _interp(a, b, w: float, fallback, circular: bool = False):
+    """
+    a + (b - a) * w over two hourly values, either of which may be None.
+
+    w = 0 returns a untouched, None included, so a whole-hour offset reads
+    exactly what it read before interpolation existed.  With one side missing
+    the side that exists is nearer the truth than _FALLBACK.  circular is for
+    wind direction: 350 deg to 10 deg passes through north, not through south.
+    """
+    if w == 0 or b is None:
+        return a if a is not None else fallback
+    if a is None:
+        return b
+    if circular:
+        return (a + ((b - a + 180) % 360 - 180) * w) % 360
+    return a + (b - a) * w
+
+
 # --- live forecast: per-hour cache and a daily call counter -------------------
 #
 # Every candidate grid in a retrain cycle used to be its own request, night
@@ -85,11 +131,13 @@ def _hour_index(times: list[str], forecast_h: int) -> int:
 # before anything else bound it.  Nothing about that was visible either — there
 # was no counter.
 #
-# The key is a 0.1 degree cell and the forecast hour.  That is not a compromise:
+# The key is a 0.1 degree cell and the forecast offset.  That is not a compromise:
 # build_feature_matrix already spreads one point sample across the whole 11 km
 # grid, so two requests 0.1 degree apart in the same hour were always going to
 # produce the same sixteen columns.  Entries are dropped when the hour rolls
-# over, which is also when the upstream values change.
+# over, which is also when the upstream values change.  /predict rounds the
+# offset to a quarter hour before it gets here, so a client cannot mint a fresh
+# key — and a fresh upstream call — per float.
 _LIVE_SNAP = 0.1
 _live_cache: dict[tuple, dict] = {}
 _live_hour = ""
@@ -101,7 +149,7 @@ _live_usage = {"day": "", "requests": 0, "cache_hits": 0,
 LIVE_DAILY_QUOTA = 10000
 
 
-def _live_key(lat: float, lon: float, forecast_h: int) -> tuple:
+def _live_key(lat: float, lon: float, forecast_h: float) -> tuple:
     return (round(lat / _LIVE_SNAP) * _LIVE_SNAP,
             round(lon / _LIVE_SNAP) * _LIVE_SNAP, forecast_h)
 
@@ -132,11 +180,14 @@ def _count_live(hit: bool, historical: bool = False) -> None:
     _live_usage[f"{prefix}cache_hits" if hit else f"{prefix}requests"] += 1
 
 
-async def fetch_meteo_features(lat: float, lon: float, forecast_h: int,
+async def fetch_meteo_features(lat: float, lon: float, forecast_h: float,
                                strict: bool = False) -> dict | None:
     """
     Open-Meteo: free, no API key needed.
     Returns fallback values if the network is unavailable.
+
+    forecast_h is hours ahead of the current hour.  A fractional offset is
+    interpolated between the two hourly values either side — see _hour_slots.
 
     Cached per 0.1 degree cell for the current hour — see the note above.
 
@@ -171,12 +222,15 @@ async def fetch_meteo_features(lat: float, lon: float, forecast_h: int,
         r.raise_for_status()
         data   = r.json()
         hourly = data["hourly"]
-        idx    = _hour_index(hourly["time"], forecast_h)
+        i0, i1, w = _hour_slots(hourly["time"], forecast_h)
 
-        def _v(key, fb_key):
-            val = hourly[key][idx]
-            return val if val is not None else _FALLBACK[fb_key]
+        def _v(key, fb_key, circular=False):
+            return _interp(hourly[key][i0], hourly[key][i1], w,
+                           _FALLBACK[fb_key], circular)
 
+        # The derived values below (lapse rate, cloud base) are computed from
+        # the interpolated temperatures, not interpolated themselves, so they
+        # stay consistent with the three numbers they are built from.
         t2m  = _v("temperature_2m",     "temp_2m")
         t850 = _v("temperature_850hPa", "temp_850")
         t500 = _v("temperature_500hPa", "temp_500")
@@ -185,7 +239,7 @@ async def fetch_meteo_features(lat: float, lon: float, forecast_h: int,
             "temp_2m":    t2m,
             "humidity":   _v("relativehumidity_2m", "humidity_pct") / 100,
             "wind_speed": _v("windspeed_10m",       "wind_speed"),
-            "wind_dir":   _v("winddirection_10m",   "wind_dir"),
+            "wind_dir":   _v("winddirection_10m",   "wind_dir", circular=True),
             "cape":       _v("cape",                "cape"),
             "cin":        _v("convective_inhibition", "cin"),
             "solar_ghi":  _v("shortwave_radiation", "solar_ghi"),

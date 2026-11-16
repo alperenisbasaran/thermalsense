@@ -87,7 +87,9 @@ const STRINGS = {
     seeAheadFig:   '+23 sa',
     seeAheadUnit:  'ileri tahmin',
     seeAhead:      'Aynı alan, Open-Meteo tahmin verisiyle 23 saat sonrasına '
-                 + 'kadar herhangi bir saat için yeniden puanlanabilir.',
+                 + 'kadar yeniden puanlanabilir: ilk üç saat 15 dakikada bir, '
+                 + 'sonrası saat başı. Çeyrek saatler, saatlik değerlerin '
+                 + 'arasından enterpolasyonla bulunur.',
     seeLiveFig:    '1 sn',
     seeLiveUnit:   'canlı trafik',
     seeLive:       'Canlı trafik saniyede bir yenilenir. Daire çizerek '
@@ -305,8 +307,10 @@ const STRINGS = {
                  + 'well as a probability.',
     seeAheadFig:   '+23 h',
     seeAheadUnit:  'forecast',
-    seeAhead:      'The same area can be scored for any hour up to 23 hours '
-                 + 'ahead, on Open-Meteo forecast data.',
+    seeAhead:      'The same area can be scored up to 23 hours ahead on '
+                 + 'Open-Meteo forecast data: every 15 minutes for the first '
+                 + 'three hours, then hourly. The quarter hours are '
+                 + 'interpolated between the hourly values.',
     seeLiveFig:    '1 s',
     seeLiveUnit:   'live traffic',
     seeLive:       'Live traffic refreshes every second. Gliders circling in a '

@@ -43,6 +43,7 @@ GET /predict?lat&lon&alt&forecast_h
    │
    ├─ gather:
    │    fetch_meteo_features()            Open-Meteo, one point, hourly index
+   │                                      (quarter-hour offsets interpolated)
    │    fetch_elevation_grid()            OpenTopoData SRTM, coarse then upsampled
    │  [ fetch_landcover_fine()            ESA WorldCover, only if ENABLE_LANDCOVER ]
    │
