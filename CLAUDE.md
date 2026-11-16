@@ -244,6 +244,16 @@ Breaking any of these has taken the app down or silently corrupted results befor
 
   `alt_agl` alone being below chance is the ground-row leak confirmed gone; it
   used to score 0.631 and carry almost the whole headline.
+- **Re-measured 16 Nov 2026** on the 6 Nov buffer, same command
+  (`--variant base --by-hour`), after dropping its 862 invented-weather rows
+  the way `load()` does: 47,419 rows, 6,259 positives, 2,009 mixed-label units.
+  Served model **0.570 [0.539, 0.601]**; `cos_incidence` alone 0.551
+  [0.520, 0.580]; `terrain_multiplier` 0.525 [0.493, 0.557]; physics fallback
+  0.502; `alt_agl` alone 0.501. By region (served vs terrain): Alps 0.612,
+  +0.041 [+0.013, +0.072]; Iberia 0.611, +0.070 [+0.045, +0.096]; Germany
+  0.575, +0.043 [−0.003, +0.091]; other 0.523, +0.037 [+0.019, +0.052];
+  Türkiye 55 rows, 1 mixed group — not measurable. The rise from 0.542 sits
+  inside both intervals, so it is not yet evidence that more data helps.
 - **Nothing has yet been proven to raise it, and four things have been ruled
   out.** Paired deltas against the shipped setup, same groups, 1,500 bootstrap
   resamples: `solar` as a 23rd column −0.019 [−0.051, +0.010]; a pairwise
@@ -442,10 +452,16 @@ before it, the catch-all served the map app for any path that was not an exact
 file name. The map app stays at `/`, so `?compare=1` and `?panel=training`
 links keep working; the landing page links to both.
 
-- **Its numbers are copies.** The score table, the four ruled-out deltas, the
-  label thresholds and the 27% pseudo-absence figure are written out in
-  `landing/strings.js` and `Landing.jsx`. Re-measure one here and change it
-  there — that page is the only place a visitor reads them.
+- **Its numbers are copies.** The score and region tables (16 Nov 2026 run,
+  below), the 27 Sep 0.542 comparison, the label thresholds and the 27%
+  pseudo-absence figure are written out in `landing/strings.js` and
+  `Landing.jsx`. Re-measure one here and change it there — that page is the
+  only place a visitor reads them.
+- **It is written for investors as well as pilots.** Confident register, but
+  no claim past what was measured: "stronger than any single signal" is a
+  point-estimate statement (the sun-angle baseline's interval overlaps the
+  model's), and the 0.542 → 0.570 line is two measurements, not a proven
+  trend — their intervals overlap too.
 - **Its copy lives in `landing/strings.js`, not `i18n/strings.js`**, so the
   map app's bundle does not carry a page of prose. Invariant 5 still holds: no
   string in a component, every key in both languages. A dev build warns in the
