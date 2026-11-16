@@ -122,7 +122,7 @@ upgrades `https` to `wss` automatically.
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/predict?lat=&lon=&alt=&forecast_h=` | Heatmap + uncertainty + weather summary for a grid around the point |
+| `GET` | `/predict?lat=&lon=&alt=&forecast_h=` | Heatmap + uncertainty + weather summary for a grid around the point. `forecast_h` is hours ahead (0–24, quarter-hour resolution) |
 | `GET` | `/ogn/live?wait_agl=` | Snapshot of the live feed |
 | `GET` | `/ogn/search?q=&limit=` | Substring search on glider id across the whole feed |
 | `GET` | `/ogn/track/{glider_id}` | Last 8 hours of positions for one aircraft |

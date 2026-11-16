@@ -313,8 +313,14 @@ body {
 
 .forecast-slider { width: 90px; accent-color: var(--accent-strong); }
 
+/* Wide enough for the longest stop, "+2 sa 45 dk". .forecast-ctrl is pushed
+   right by margin-left:auto, so a label that changed width as the slider moved
+   dragged the slider sideways under the pointer — 35 px between "+1 sa" and
+   "+1 sa 15 dk" at 1440 px wide. */
 .forecast-ctrl-value {
-  min-width: 28px;
+  min-width: 5.5em;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
   font-size: 12px;
   font-weight: 600;
   color: var(--accent);

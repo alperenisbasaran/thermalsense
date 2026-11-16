@@ -62,6 +62,17 @@ export const ADMIN_TOKEN = import.meta.env.VITE_ADMIN_TOKEN ?? '';
 export const MAP_CENTER = [46.5, 15.5];
 export const MAP_ZOOM   = 5;
 
+// Forecast slider stops, in hours ahead. Every 15 minutes across the first three
+// hours — the window a pilot is choosing a launch time in, where a whole hour is
+// too coarse — then hourly out to +23. The slider moves by index through this
+// list, so the near hours get proportionally more of its travel. Open-Meteo is
+// hourly; the backend interpolates the quarter hours between its fields and
+// accepts any multiple of 0.25 up to 24.
+export const FORECAST_STEPS = [
+  ...Array.from({ length: 12 }, (_, i) => i * 0.25),   // 0, 0.25 … 2.75
+  ...Array.from({ length: 21 }, (_, i) => 3 + i),      // 3, 4 … 23
+];
+
 // Must match backend fetch_elevation_grid default radius (config.py GRID_RADIUS).
 // The grid spans centre ± this on both axes, inclusive of both edges, so it is
 // 201 × 201 sample points at exactly GRID_RES apart — use rows-1/cols-1 when

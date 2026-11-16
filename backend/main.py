@@ -1,8 +1,9 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, BackgroundTasks, HTTPException, Header, Depends
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, BackgroundTasks, HTTPException, Header, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from contextlib import asynccontextmanager
+from typing import Annotated
 import secrets
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -428,7 +429,8 @@ _predict_sem = asyncio.Semaphore(PREDICT_CONCURRENCY)
 
 
 @app.get("/predict")
-async def predict(lat: float, lon: float, alt: int | None = None, forecast_h: int = 0):
+async def predict(lat: float, lon: float, alt: int | None = None,
+                  forecast_h: Annotated[float, Query(ge=0, le=24)] = 0):
     """
     Predicted thermal strength over a grid centred on (lat, lon).
 
@@ -437,12 +439,21 @@ async def predict(lat: float, lon: float, alt: int | None = None, forecast_h: in
     is no use to someone at 1500 m.  It is converted to height above ground per
     cell, matching how training samples record the glider's altitude.
 
+    forecast_h is hours ahead, in quarter hours: the slider steps every 15
+    minutes over the first three hours.  It is rounded to the nearest quarter
+    here, once, so the weather lookup and the time-of-day columns describe the
+    same moment, and so the live meteo cache sees a handful of keys per cell
+    rather than one per float a client can type.  24 is the most the 2-day
+    Open-Meteo window covers from any current hour; past it the lookup would
+    clamp to the last slot and answer for a time nobody asked about.
+
     The grid is centred on the terrain lattice point nearest (lat, lon), up to
     ~550 m away, and grid_lat/grid_lon in the response say where that is.  Every
     bound here is derived from it rather than from the request point, so the
     coordinates a cell is labelled with are the coordinates its elevation, slope
     and aspect were sampled at.
     """
+    forecast_h = round(forecast_h * 4) / 4
     try:
         grid_lat, grid_lon = snap_grid_centre(lat, lon)
         meteo, terrain = await asyncio.gather(

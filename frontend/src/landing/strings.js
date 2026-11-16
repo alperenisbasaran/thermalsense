@@ -73,7 +73,9 @@ const STRINGS = {
     seeAheadFig:   '+23 sa',
     seeAheadUnit:  'ileri tahmin',
     seeAhead:      'Sürgüyü kaydırın; aynı alan Open-Meteo tahminiyle 23 saat '
-                 + 'ileriye kadar yeniden hesaplanır.',
+                 + 'ileriye kadar yeniden hesaplanır: ilk üç saat 15 dakikada '
+                 + 'bir (saatlik değerler arasında enterpolasyonla), sonrası '
+                 + 'saat saat.',
     seeLiveFig:    '1 sn',
     seeLiveUnit:   'canlı trafik',
     seeLive:       'Planörler haritaya saniyede bir akar. Daire çizenler sarı '
@@ -276,7 +278,9 @@ const STRINGS = {
     seeAheadFig:   '+23 h',
     seeAheadUnit:  'forecast',
     seeAhead:      'Drag the slider and the same patch is scored again, up to '
-                 + '23 hours ahead, on Open-Meteo forecast fields.',
+                 + '23 hours ahead, on Open-Meteo forecast fields: every 15 '
+                 + 'minutes for the first three hours (interpolated between '
+                 + 'the hourly values), then hour by hour.',
     seeLiveFig:    '1 s',
     seeLiveUnit:   'live traffic',
     seeLive:       'Gliders stream onto the map every second. Circling ones '
