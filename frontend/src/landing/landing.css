@@ -1,0 +1,641 @@
+/* ---------------------------------------------------------------------------
+   Landing page (/about)
+
+   The page is the sky and the hero panel is the ground seen through it. So the
+   page takes the theme — a hazy daytime blue, or dusk — while the simulation
+   panel stays dark in both, for the reason index.css gives for the real map.
+
+   One rule for colour: warm means lift. --lift appears where a glider climbed
+   (the positive stretches of the barogram, the served model's score) and
+   nowhere else, so it never has to compete with decoration.
+
+   Tokens are keyed on the same data-theme attribute as the map app and follow
+   the same convention: dark is the fallback, light is the override.
+   --------------------------------------------------------------------------- */
+:root {
+  --page:    #0b1723;
+  --sky-a:   #17364f;   /* overhead */
+  --sky-b:   #0f2436;   /* toward the horizon */
+  --panel:   #122131;
+  --ink:     #e9f1f8;
+  --ink-2:   #a9bccd;
+  --ink-3:   #8499ad;   /* 6.0:1 on --page */
+  --rule:    #24394d;
+  --lift:    #ff9a57;
+  --sink:    #7fc1f5;
+  --ground-edge: #24394d;
+  --shadow:  0 18px 50px rgba(0, 0, 0, 0.45);
+
+  --sans: 'Archivo Variable', 'Archivo', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  /* Figures only. B612 Mono has no ğ, ş or İ — never put translated text in it. */
+  --mono: 'B612 Mono', ui-monospace, 'Cascadia Mono', 'SF Mono', Menlo, Consolas, monospace;
+
+  color-scheme: dark;
+}
+
+:root[data-theme="light"] {
+  --page:    #edf3f8;
+  --sky-a:   #a8cae6;
+  --sky-b:   #cfe2f1;
+  --panel:   #ffffff;
+  --ink:     #0d2236;
+  --ink-2:   #3b5269;
+  --ink-3:   #566b80;   /* 5.0:1 on --page */
+  --rule:    #bccddc;
+  --lift:    #b93d0a;   /* 5.0:1 on --page; the orange of the dark theme fails on white */
+  --sink:    #1b5fa6;
+  --ground-edge: transparent;
+  --shadow:  0 18px 44px rgba(13, 34, 54, 0.22);
+
+  color-scheme: light;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { scroll-padding-top: 16px; }
+@media (prefers-reduced-motion: no-preference) {
+  html { scroll-behavior: smooth; }
+}
+
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--ink-2);
+  font-family: var(--sans);
+  font-size: 17px;
+  line-height: 1.6;
+  font-stretch: 100%;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+p { margin: 0 0 1em; text-wrap: pretty; }
+
+a { color: var(--ink); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+a:hover { color: var(--sink); }
+
+:focus-visible {
+  outline: 2px solid var(--sink);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+.wrap {
+  width: 100%;
+  max-width: 1168px;
+  margin-inline: auto;
+  padding-inline: 24px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.skip {
+  position: absolute;
+  left: 16px; top: -64px;
+  z-index: 10;
+  padding: 10px 16px;
+  border-radius: 8px;
+  background: var(--ink);
+  color: var(--page);
+  font-weight: 600;
+}
+.skip:focus { top: 16px; color: var(--page); }
+
+/* ── Headings ──
+   One family, two widths: stretched for display, normal for reading. */
+h2 {
+  margin: 0 0 20px;
+  color: var(--ink);
+  font-stretch: 118%;
+  font-weight: 600;
+  font-size: clamp(1.6rem, 3.2vw, 2.4rem);
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+h3 {
+  margin: 0 0 8px;
+  color: var(--ink);
+  font-stretch: 108%;
+  font-weight: 640;
+  font-size: 1.02rem;
+  line-height: 1.3;
+}
+
+/* ── Buttons ── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  padding: 0 26px;
+  border: 1.5px solid transparent;
+  border-radius: 999px;
+  font-weight: 620;
+  font-size: 1rem;
+  text-decoration: none;
+  white-space: nowrap;
+  /* No colour transition: on a theme switch the label would flip at once while
+     the fill eased after it, and for that moment the button is dark on dark. */
+}
+.btn.primary { background: var(--ink); color: var(--page); }
+.btn.primary:hover { background: color-mix(in srgb, var(--ink) 84%, var(--sink)); color: var(--page); }
+.btn.quiet { color: var(--ink); border-color: color-mix(in srgb, var(--ink) 32%, transparent); }
+.btn.quiet:hover { color: var(--ink); border-color: var(--ink); }
+.btn.small { min-height: 36px; padding: 0 16px; font-size: 0.86rem; }
+
+/* ── Hero ── */
+.hero {
+  padding-bottom: clamp(40px, 6vw, 72px);
+  background: linear-gradient(180deg, var(--sky-a) 0%, var(--sky-b) 48%, var(--page) 100%);
+}
+
+.nav {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding-block: 18px;
+}
+.brand {
+  color: var(--ink);
+  font-stretch: 122%;
+  font-weight: 650;
+  font-size: 1.05rem;
+  text-decoration: none;
+}
+.brand:hover { color: var(--ink); }
+.nav-links {
+  display: flex;
+  gap: 24px;
+  margin-left: auto;
+  font-size: 0.9rem;
+}
+.nav-links a { text-decoration: none; }
+.nav-links a:hover { color: var(--ink); text-decoration: underline; }
+.nav-tools { display: flex; align-items: center; gap: 8px; }
+.tool {
+  min-width: 40px;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--ink) 26%, transparent);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 660;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+}
+.tool:hover { border-color: var(--ink); }
+
+.hero-body { padding-block: clamp(36px, 7vw, 88px) clamp(32px, 4vw, 48px); }
+
+/* The thesis, set in its own terms: the invisible thing in a hairline, the
+   evidence for it in a solid weight. */
+.hero-title {
+  margin: 0 0 28px;
+  color: var(--ink);
+  font-stretch: 125%;
+  font-size: clamp(2rem, 5.4vw, 4.1rem);
+  line-height: 1.04;
+  letter-spacing: -0.012em;
+  text-wrap: balance;
+}
+.hero-title span { display: block; }
+.hero-title .unseen { font-weight: 150; }
+.hero-title .seen   { font-weight: 660; }
+
+.lede {
+  max-width: 62ch;
+  margin-bottom: 30px;
+  color: var(--ink);
+  font-size: 1.12rem;
+}
+
+.actions { display: flex; flex-wrap: wrap; gap: 12px; }
+
+/* ── Hero simulation ── */
+.field-figure { margin: 0; }
+.field-figure figcaption {
+  max-width: 72ch;
+  margin-top: 14px;
+  color: var(--ink-2);
+  font-size: 0.9rem;
+}
+
+.field {
+  position: relative;
+  aspect-ratio: 21 / 8;
+  min-height: 320px;
+  overflow: hidden;
+  border: 1px solid var(--ground-edge);
+  border-radius: 16px;
+  background: #0b1219;
+  box-shadow: var(--shadow);
+}
+.field-canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.field :focus-visible { outline-color: #fff; }
+
+.field-controls {
+  position: absolute;
+  top: 12px; right: 12px;
+  display: flex;
+  gap: 8px;
+}
+.field-btn {
+  padding: 7px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 999px;
+  background: rgba(11, 18, 25, 0.78);
+  color: #e6eef6;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 560;
+  line-height: 1.3;
+  cursor: pointer;
+}
+.field-btn:hover { border-color: rgba(255, 255, 255, 0.6); }
+.field-btn[aria-pressed="true"] { background: #e6eef6; color: #0b1219; }
+
+.field-key {
+  position: absolute;
+  left: 12px; bottom: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 18px;
+  max-width: calc(100% - 24px);
+  margin: 0;
+  padding: 8px 13px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 10px;
+  background: rgba(11, 18, 25, 0.78);
+  color: #cfdbe6;
+  font-size: 0.76rem;
+  line-height: 1.3;
+  list-style: none;
+}
+.field-key li { display: flex; align-items: center; gap: 8px; }
+/* A wing and a fuselage: the mark its row is drawn with on the panel. */
+.key-glyph { position: relative; width: 17px; height: 1.5px; flex: none; }
+.key-glyph::after {
+  content: '';
+  position: absolute;
+  left: 7px; top: -4px;
+  width: 2px; height: 9px;
+  background: inherit;
+}
+.key-glyph.gold { background: #ffd700; }
+.key-glyph.sky  { background: rgb(140, 200, 255); }
+.key-ramp {
+  width: 72px; height: 8px;
+  border-radius: 2px;
+  background: linear-gradient(to right,
+    rgb(20, 180, 255), rgb(80, 255, 80), rgb(255, 200, 0), rgb(255, 30, 0));
+}
+.key-ends { color: #9fb1c2; }
+
+.live {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 22px 0 0;
+  color: var(--ink);
+  font-size: 0.95rem;
+}
+.live-dot {
+  flex: none;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--ink-3);
+}
+.live-dot.on {
+  background: var(--lift);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--lift) 26%, transparent);
+}
+
+/* ── Sections ── */
+.band {
+  padding-block: clamp(56px, 9vw, 112px);
+  border-top: 1px solid var(--rule);
+}
+.intro { max-width: 66ch; margin-bottom: 36px; font-size: 1.08rem; }
+.sub { margin-top: 56px; }
+.meta { max-width: 78ch; color: var(--ink-3); font-size: 0.86rem; }
+.reading { max-width: 66ch; margin-top: 22px; font-size: 1.08rem; }
+
+/* What you see: a figure, what it counts, what it means */
+.facts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 32px 28px;
+  margin: 36px 0 56px;
+}
+.fact dt {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+  padding-top: 14px;
+  border-top: 2px solid var(--ink);
+}
+.fact-figure {
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: clamp(1.45rem, 2.3vw, 1.9rem);
+  line-height: 1.15;
+  white-space: nowrap;
+}
+.fact-unit {
+  color: var(--ink-3);
+  font-size: 0.78rem;
+  font-weight: 620;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+.fact dd { margin: 0; font-size: 0.96rem; }
+
+.notes {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 20px;
+}
+.notes > div {
+  padding: 22px 24px 8px;
+  border-radius: 14px;
+  background: var(--panel);
+  font-size: 0.96rem;
+}
+.notes.three { margin-top: 56px; }
+
+.split {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+  gap: 32px 64px;
+  align-items: start;
+}
+.split.table-first { grid-template-columns: minmax(0, 6fr) minmax(0, 5fr); }
+
+/* ── Barogram ── */
+.baro-figure {
+  margin: 0 0 56px;
+  padding: 22px 22px 24px;
+  border-radius: 16px;
+  background: var(--panel);
+}
+.baro svg { display: block; }
+.baro-grid   { stroke: var(--rule); stroke-width: 1; }
+.baro-ground { stroke: var(--ink-3); stroke-width: 1.5; }
+.baro-tick   { fill: var(--ink-3); font-family: var(--mono); font-size: 11px; }
+.baro-axis {
+  fill: var(--ink-3);
+  font-size: 10.5px;
+  font-weight: 620;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+.baro-limit       { stroke: var(--ink-3); stroke-width: 1; stroke-dasharray: 7 5; }
+.baro-limit-label { fill: var(--ink-2); font-size: 12px; font-weight: 560; }
+/* Three line styles as well as three colours, so the kinds survive greyscale. */
+.baro-seg  { fill: none; stroke-linecap: round; }
+.baro-pos  { stroke: var(--lift); stroke-width: 4; }
+.baro-neg  { stroke: var(--sink); stroke-width: 2; }
+.baro-drop { stroke: var(--ink-3); stroke-width: 2.2; stroke-dasharray: 0.1 6.5; }
+/* Sans, not --mono: a monospaced decimal comma takes a full cell and "+2,4"
+   arrives looking like "+2, 4". */
+.baro-vario { fill: var(--ink-2); font-size: 12.5px; font-weight: 560; font-variant-numeric: tabular-nums; }
+
+.labels {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px 28px;
+  margin: 20px 0 0;
+  padding: 0;
+  font-size: 0.93rem;
+  list-style: none;
+}
+.labels li {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  column-gap: 12px;
+  align-items: center;
+}
+.labels strong { color: var(--ink); font-weight: 650; }
+.labels li > span:last-child { grid-column: 2; }
+.swatch { height: 0; }
+.swatch.pos  { border-top: 4px solid var(--lift); border-radius: 2px; }
+.swatch.neg  { border-top: 2px solid var(--sink); }
+.swatch.drop { border-top: 2.2px dotted var(--ink-3); }
+
+/* ── Pipeline ── */
+.steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: step;
+}
+.steps li {
+  display: grid;
+  grid-template-columns: 2.3rem minmax(0, 1fr);
+  padding: 14px 0;
+  border-top: 1px solid var(--rule);
+  counter-increment: step;
+}
+.steps li::before {
+  content: counter(step);
+  grid-row: 1 / span 2;
+  padding-top: 3px;
+  color: var(--ink-3);
+  font-family: var(--mono);
+  font-size: 0.88rem;
+}
+.steps strong { color: var(--ink); font-weight: 650; }
+.steps span { grid-column: 2; font-size: 0.95rem; }
+
+/* ── Scores ── */
+#score h2 { margin-bottom: 6px; }
+/* The answer to the heading above it, at the same size and a third the weight. */
+.verdict {
+  margin: 0 0 28px;
+  color: var(--ink);
+  font-stretch: 118%;
+  font-weight: 250;
+  font-size: clamp(1.6rem, 3.2vw, 2.4rem);
+  line-height: 1.12;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+
+.iv {
+  width: 100%;
+  margin: 8px 0 14px;
+  border-collapse: collapse;
+  font-size: 0.95rem;
+}
+.iv th, .iv td {
+  padding: 12px 16px 12px 0;
+  border-top: 1px solid var(--rule);
+  text-align: left;
+  vertical-align: middle;
+}
+.iv thead th {
+  padding-bottom: 8px;
+  border-top: 0;
+  color: var(--ink-3);
+  font-size: 0.74rem;
+  font-weight: 620;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  vertical-align: bottom;
+}
+.iv-label { width: 32%; color: var(--ink-2); font-weight: 450; }
+/* Tabular sans rather than --mono, for the same reason as .baro-vario: these
+   are decimals, and in Turkish the decimal mark is a comma. */
+.iv-num   { color: var(--ink); font-size: 0.92rem; font-weight: 520; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.iv-ci    { color: var(--ink-2); }
+.iv .iv-track, .iv .iv-h-track { width: 38%; padding-right: 0; }
+
+/* Inset so the end ticks, centred on their value, stay inside the column. */
+.iv-plot, .iv-axis { position: relative; display: block; height: 22px; margin: 0 20px 0 8px; }
+.iv-tick {
+  position: absolute;
+  bottom: 0;
+  transform: translateX(-50%);
+  color: var(--ink-3);
+  font-size: 0.72rem;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  text-transform: none;
+  white-space: nowrap;
+}
+.iv-tick.ref { color: var(--ink); font-weight: 650; }
+/* Runs through the row's padding and border, so the reference reads as one
+   line down the whole table instead of a tick per row. */
+.iv-ref {
+  position: absolute;
+  top: -13px; bottom: -13px;
+  width: 1px;
+  background: var(--ink-3);
+}
+.iv-whisker {
+  position: absolute;
+  top: 50%;
+  height: 2px;
+  margin-top: -1px;
+  border-radius: 1px;
+  background: var(--ink-3);
+}
+.iv-dot {
+  position: absolute;
+  top: 50%;
+  width: 10px; height: 10px;
+  margin: -5px 0 0 -5px;
+  border-radius: 50%;
+  background: var(--ink-2);
+  box-shadow: 0 0 0 2px var(--page);
+}
+.iv-emph .iv-label   { color: var(--ink); font-weight: 660; }
+.iv-emph .iv-whisker { height: 3px; margin-top: -1.5px; background: var(--lift); }
+.iv-emph .iv-dot     { width: 12px; height: 12px; margin: -6px 0 0 -6px; background: var(--lift); }
+
+/* ── Sources ── */
+.sources { width: 100%; border-collapse: collapse; font-size: 0.96rem; }
+.sources th, .sources td {
+  padding: 14px 18px 14px 0;
+  border-top: 1px solid var(--rule);
+  text-align: left;
+  vertical-align: top;
+}
+.sources thead th {
+  padding-bottom: 8px;
+  border-top: 0;
+  color: var(--ink-3);
+  font-size: 0.74rem;
+  font-weight: 620;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+.sources tbody th { font-weight: 620; white-space: nowrap; }
+
+/* ── Close ── */
+.close {
+  padding-block: clamp(64px, 10vw, 120px) 48px;
+  border-top: 1px solid var(--rule);
+  background: linear-gradient(180deg, var(--page) 0%, var(--sky-b) 60%, var(--sky-a) 100%);
+}
+.close-title {
+  margin: 0 0 30px;
+  color: var(--ink);
+  font-stretch: 125%;
+  font-weight: 200;
+  font-size: clamp(1.9rem, 4.6vw, 3.5rem);
+  line-height: 1.06;
+  letter-spacing: -0.012em;
+  text-wrap: balance;
+}
+.disclaimer { margin: 64px 0 10px; color: var(--ink); font-size: 0.95rem; font-weight: 560; }
+.credits    { max-width: 96ch; margin: 0; color: var(--ink-2); font-size: 0.8rem; }
+
+/* ── Narrower ── */
+@media (max-width: 980px) {
+  .facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .notes { grid-template-columns: minmax(0, 1fr); }
+  .split, .split.table-first { grid-template-columns: minmax(0, 1fr); }
+  .nav-links { display: none; }
+  .nav-tools { margin-left: auto; }
+}
+
+@media (max-width: 720px) {
+  body { font-size: 16px; }
+  .wrap { padding-inline: 16px; }
+  /* A touch narrower, or the solid line breaks mid-phrase on a phone. */
+  .hero-title { font-stretch: 108%; }
+  .hero-title .unseen { font-weight: 200; }
+
+  .field { aspect-ratio: auto; height: 440px; }
+  .key-ends { display: none; }
+
+  .labels { grid-template-columns: minmax(0, 1fr); }
+  .baro-figure { padding: 16px 12px 18px; }
+
+  /* The interval tables stack: name, then its two figures, then the plot.
+     The header row keeps only the axis. Roles are set in the markup, so the
+     table is still announced as one after these display overrides. */
+  .iv, .iv thead, .iv tbody, .iv tr { display: block; }
+  .iv thead th { display: none; }
+  .iv thead .iv-h-track { display: block; width: auto; padding: 0 0 6px; }
+  .iv tbody tr {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 2px 14px;
+    padding: 12px 0;
+    border-top: 1px solid var(--rule);
+  }
+  .iv tbody th, .iv tbody td { padding: 0; border: 0; }
+  .iv .iv-label { grid-column: 1 / -1; width: auto; }
+  .iv .iv-track { grid-column: 1 / -1; width: auto; padding-top: 6px; }
+  .iv-ref { top: -4px; bottom: -4px; }
+}
+
+@media (max-width: 520px) {
+  /* The same button sits a thumb's reach below, in the hero; three controls
+     and the brand do not fit beside it on a phone. */
+  .nav .btn { display: none; }
+  .facts { grid-template-columns: minmax(0, 1fr); }
+  .field-controls { left: 12px; right: 12px; justify-content: flex-end; flex-wrap: wrap; }
+  .sources tbody th { white-space: normal; }
+}

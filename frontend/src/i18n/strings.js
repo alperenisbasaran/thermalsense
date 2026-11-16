@@ -43,6 +43,8 @@ const STRINGS = {
     switchToTurkish:    "Türkçe'ye geç",
     switchToLight:      'Aydınlık moda geç',
     switchToDark:       'Karanlık moda geç',
+    about:              'Hakkında',
+    aboutTitle:         'ThermalSense nedir, nasıl öğrenir, ne kadar iyi',
 
     // info panel
     thermalPeak:        'Termal zirve',
@@ -236,6 +238,8 @@ const STRINGS = {
     switchToTurkish:    'Switch to Turkish',
     switchToLight:      'Switch to light mode',
     switchToDark:       'Switch to dark mode',
+    about:              'About',
+    aboutTitle:         'What ThermalSense is, how it learns and how good it is',
 
     thermalPeak:        'Thermal peak',
     thermalBase:        'Thermal base',
