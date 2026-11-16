@@ -136,7 +136,6 @@ def geo(monkeypatch, tmp_path):
     monkeypatch.setattr(tc, "_get_client", lambda: None)
     monkeypatch.setattr(tc.asyncio, "sleep", no_sleep)
     monkeypatch.setattr(tc, "_CACHE_DIR", tmp_path)
-    monkeypatch.setattr(tc, "_POINT_CACHE_PATH", tmp_path / "points.json")
     return urls
 
 

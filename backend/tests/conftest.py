@@ -19,6 +19,25 @@ def _terrain_source_offline(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _terrain_cache_in_tmp(tmp_path, monkeypatch):
+    """
+    Keep the terrain disk cache, and the journal's bookkeeping, inside the test.
+
+    Every 50 new points are flushed, and the default directory is the real
+    backend/cache.  The batch tests fetch up to 500 stubbed points at 100 m, so
+    a run replaced a developer's point cache with them: on 15 Nov 2026 the
+    points.json beside 16,443 real Copernicus grids held 200 entries, every one
+    of them (50.x, 1.x) -> 100.  The directory keeps its name, which is what
+    test_sources_never_share_a_cache_directory looks at.
+    """
+    from data import terrain_client as tc
+    monkeypatch.setattr(tc, "_CACHE_DIR", tmp_path / tc._CACHE_DIR.name)
+    monkeypatch.setattr(tc, "_point_unsaved", [])
+    monkeypatch.setattr(tc, "_journal_records", 0)
+    monkeypatch.setattr(tc, "_journal_clean", True)
+
+
+@pytest.fixture(autouse=True)
 def _model_files_in_tmp(tmp_path, monkeypatch):
     """
     Point every model and buffer write at the test's own tmp_path.
