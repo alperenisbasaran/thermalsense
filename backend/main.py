@@ -1055,6 +1055,27 @@ async def websocket_live(ws: WebSocket):
 
 
 # --- Static frontend ----------------------------------------------------------
+def _static_file(static_dir: Path, full_path: str) -> Path | None:
+    """The built file ``full_path`` names under ``static_dir``, or None.
+
+    The path is tried as given and then with ``.html`` appended. The frontend
+    builds two pages — the map app (``index.html``) and the landing page
+    (``about.html``) — and the second form is what lets the landing page answer
+    at ``/about`` rather than only at ``/about.html``, the same URL Vite's dev
+    server gives it.
+    """
+    root = static_dir.resolve()
+    rel = full_path.strip("/")
+    if not rel:
+        return None
+    for name in (rel, f"{rel}.html"):
+        candidate = (root / name).resolve()
+        # Guard against ../ traversal escaping the static root
+        if candidate.is_file() and candidate.is_relative_to(root):
+            return candidate
+    return None
+
+
 # Registered last on purpose: a mount at "/" swallows every path, so all API
 # routes above must already be registered to keep matching first.
 if STATIC_DIR.is_dir() and (STATIC_DIR / "index.html").exists():
@@ -1075,11 +1096,7 @@ if STATIC_DIR.is_dir() and (STATIC_DIR / "index.html").exists():
     @app.get("/{full_path:path}", include_in_schema=False)
     async def _spa_fallback(full_path: str):
         """Serve real files when they exist, else fall back to index.html."""
-        candidate = (STATIC_DIR / full_path).resolve()
-        # Guard against ../ traversal escaping the static root
-        if candidate.is_file() and candidate.is_relative_to(STATIC_DIR.resolve()):
-            return FileResponse(candidate)
-        return FileResponse(_index)
+        return FileResponse(_static_file(STATIC_DIR, full_path) or _index)
 
     log.info(f"[static] serving frontend from {STATIC_DIR}")
 else:

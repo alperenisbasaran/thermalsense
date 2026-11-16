@@ -22,7 +22,7 @@ All backend commands run from `backend/`. A Windows venv exists at
 `backend/.venv` with every dependency installed — prefer it.
 
 ```bash
-# Tests — 370 tests, ~15 s (needs pyarrow, or the archive tests skip)
+# Tests — 374 tests, ~15 s (needs pyarrow, or the archive tests skip)
 cd backend && ./.venv/Scripts/python.exe -m pytest tests/ -q
 
 # Single test file
@@ -83,6 +83,7 @@ local `cache/terrain-copernicus/points.json` held 200 entries, all
 | [frontend/src/components/ThermalMap.jsx](frontend/src/components/ThermalMap.jsx) | Leaflet map, heatmap canvas, glider markers and tracks |
 | [frontend/src/components/CompareLayer.jsx](frontend/src/components/CompareLayer.jsx) | Raw data / product comparison: the before/after divider, the raw-inputs canvas and the two caption cards |
 | [frontend/src/i18n/strings.js](frontend/src/i18n/strings.js) | TR/EN dictionaries — must stay in key parity |
+| [frontend/about.html](frontend/about.html), [frontend/src/landing/](frontend/src/landing/) | Landing page at `/about`: a second page of the same Vite build, not a route in the app. Own stylesheet and own TR/EN dictionary (`landing/strings.js`); language and theme come from the app's two providers, so both are one choice across the two pages |
 | [DEPLOY.md](DEPLOY.md) | Hosting rationale, sizing, TLS, operating runbook |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Data flow, feature pipeline, training loop, resource budget |
 
@@ -433,6 +434,29 @@ dragging redraws nothing — which matters when one layer is a 40,401-cell grid.
   container and is never clipped. It drops to the bottom edge while the
   comparison is on, because the caption cards hang from the top of the divider
   and the divider starts at the centre — where the note otherwise sits.
+
+**The landing page (`/about`) is a second page, and it quotes this file.**
+`vite.config.js` lists `index.html` and `about.html` as build inputs, and
+`_static_file` in `main.py` is what makes `/about` answer with `about.html` —
+before it, the catch-all served the map app for any path that was not an exact
+file name. The map app stays at `/`, so `?compare=1` and `?panel=training`
+links keep working; the landing page links to both.
+
+- **Its numbers are copies.** The score table, the four ruled-out deltas, the
+  label thresholds and the 27% pseudo-absence figure are written out in
+  `landing/strings.js` and `Landing.jsx`. Re-measure one here and change it
+  there — that page is the only place a visitor reads them.
+- **Its copy lives in `landing/strings.js`, not `i18n/strings.js`**, so the
+  map app's bundle does not carry a page of prose. Invariant 5 still holds: no
+  string in a component, every key in both languages. A dev build warns in the
+  console on a missing key.
+- **`--mono` (B612 Mono) is Latin-only** — no ğ, ş or İ. It is for figures;
+  translated text set in it falls back glyph by glyph. Decimals are set in the
+  tabular sans instead, because a monospaced Turkish decimal comma reads as
+  "0, 54".
+- **The hero is a simulation and its caption says so.** No real beacon is
+  drawn there. The one live number on the page is the count from
+  `/thermals/active`, and the line is simply absent when that request fails.
 
 ## Resource budget
 

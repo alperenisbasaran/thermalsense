@@ -13,7 +13,13 @@ export default function WeatherBar({ weather, forecastH = 0, onForecastChange, l
 
   return (
     <div className="top-bar">
-      <span className="top-bar-title">ThermalSense</span>
+      <span className="top-bar-title">
+        ThermalSense
+        {/* A real navigation, not a panel: the landing page is a second page of
+            the same build (frontend/about.html). It sits on the left because
+            .top-bar clips whatever runs past its right edge on a narrow window. */}
+        <a className="top-bar-about" href="/about" title={t('aboutTitle')}>{t('about')}</a>
+      </span>
 
       <div className="wx-section">
         <span className="wx-section-label">{t('weather')}</span>

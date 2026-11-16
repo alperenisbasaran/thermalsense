@@ -196,6 +196,17 @@ body {
   margin-right: 14px;
 }
 
+/* Link to the landing page (/about), tucked beside the title it explains. */
+.top-bar-about {
+  margin-left: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--accent);
+  text-decoration: none;
+}
+.top-bar-about:hover { color: var(--text-title); text-decoration: underline; }
+
 .wx-section {
   display: flex;
   align-items: center;
